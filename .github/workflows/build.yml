@@ -1,10 +1,13 @@
-name: Build Executables
+name: Build & Release
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -27,11 +30,14 @@ jobs:
       - name: Build Windows Executable
         run: pyinstaller main.spec
 
+      - name: Compress Build
+        run: Compress-Archive -Path dist/SimpleNarrator\* -DestinationPath SimpleNarrator-Windows.zip
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleNarrator-Windows
-          path: dist/SimpleNarrator
+          name: SimpleNarrator-Windows.zip
+          path: SimpleNarrator-Windows.zip
 
   build-ubuntu:
     runs-on: ubuntu-latest
@@ -58,11 +64,14 @@ jobs:
       - name: Build Linux Executable
         run: pyinstaller main.spec
 
+      - name: Compress Build
+        run: tar -czvf SimpleNarrator-Linux.tar.gz -C dist/SimpleNarrator .
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleNarrator-Linux
-          path: dist/SimpleNarrator
+          name: SimpleNarrator-Linux.tar.gz
+          path: SimpleNarrator-Linux.tar.gz
 
   build-macos:
     runs-on: macos-latest
@@ -88,8 +97,39 @@ jobs:
       - name: Build macOS Executable
         run: pyinstaller main.spec
 
+      - name: Compress Build
+        run: cd dist && zip -r ../SimpleNarrator-macOS.zip SimpleNarrator
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleNarrator-macOS
-          path: dist/SimpleNarrator
+          name: SimpleNarrator-macOS.zip
+          path: SimpleNarrator-macOS.zip
+
+  publish-release:
+    needs: [build-windows, build-ubuntu, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SimpleNarrator-Windows.zip
+
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SimpleNarrator-Linux.tar.gz
+
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SimpleNarrator-macOS.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SimpleNarrator-Windows.zip
+            SimpleNarrator-Linux.tar.gz
+            SimpleNarrator-macOS.zip
