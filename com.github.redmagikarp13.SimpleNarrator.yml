@@ -1,0 +1,21 @@
+id: com.github.redmagikarp13.SimpleNarrator
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: SimpleNarrator
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --share=network
+  - --filesystem=host
+  - --device=dri
+
+modules:
+  - name: SimpleNarrator
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin
+      - cp -r dist/SimpleNarrator/* /app/bin/
+      - install -D -m 644 com.github.redmagikarp13.SimpleNarrator.desktop /app/share/applications/com.github.redmagikarp13.SimpleNarrator.desktop

@@ -53,7 +53,7 @@ jobs:
       - name: Install System Dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg espeak-ng libespeak-ng1
+          sudo apt-get install -y ffmpeg espeak-ng libespeak-ng1 flatpak flatpak-builder
 
       - name: Install Dependencies
         run: |
@@ -64,14 +64,26 @@ jobs:
       - name: Build Linux Executable
         run: pyinstaller main.spec
 
-      - name: Compress Build
+      - name: Compress Tarball
         run: tar -czvf SimpleNarrator-Linux.tar.gz -C dist/SimpleNarrator .
 
-      - name: Upload Artifact
+      - name: Build Flatpak Package
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+          flatpak-builder --user --disable-rofiles-fuse build-dir com.github.redmagikarp13.SimpleNarrator.yml --force-clean
+          flatpak build-bundle build-dir SimpleNarrator-Linux.flatpak com.github.redmagikarp13.SimpleNarrator
+
+      - name: Upload Tarball Artifact
         uses: actions/upload-artifact@v4
         with:
           name: SimpleNarrator-Linux.tar.gz
           path: SimpleNarrator-Linux.tar.gz
+
+      - name: Upload Flatpak Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleNarrator-Linux.flatpak
+          path: SimpleNarrator-Linux.flatpak
 
   build-macos:
     runs-on: macos-latest
@@ -121,6 +133,11 @@ jobs:
         with:
           name: SimpleNarrator-Linux.tar.gz
 
+      - name: Download Linux Flatpak Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SimpleNarrator-Linux.flatpak
+
       - name: Download macOS Artifact
         uses: actions/download-artifact@v4
         with:
@@ -132,4 +149,5 @@ jobs:
           files: |
             SimpleNarrator-Windows.zip
             SimpleNarrator-Linux.tar.gz
+            SimpleNarrator-Linux.flatpak
             SimpleNarrator-macOS.zip

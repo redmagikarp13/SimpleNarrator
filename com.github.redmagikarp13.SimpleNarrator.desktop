@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleNarrator
+Comment=Leitor de textos offline e conversor de texto para audio
+Exec=SimpleNarrator
+Icon=audio-x-generic
+Categories=Utility;Audio;AudioVideo;
+Terminal=false
