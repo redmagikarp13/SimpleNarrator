@@ -4,6 +4,7 @@ Usa ffmpeg diretamente via subprocess para conversão de formato.
 """
 
 import os
+import sys
 import wave
 import shutil
 import logging
@@ -13,6 +14,33 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def get_ffmpeg_executable() -> str:
+    """
+    Retorna o caminho do executável ffmpeg.
+    Procura primeiro no diretório temporário do PyInstaller (sys._MEIPASS),
+    depois junto ao executável (sys.executable) e por fim no PATH do sistema.
+    """
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            for ext in ["ffmpeg.exe", "ffmpeg"]:
+                candidate = os.path.join(meipass, ext)
+                if os.path.isfile(candidate):
+                    return candidate
+
+        exe_dir = os.path.dirname(sys.executable)
+        for ext in ["ffmpeg.exe", "ffmpeg"]:
+            candidate = os.path.join(exe_dir, ext)
+            if os.path.isfile(candidate):
+                return candidate
+
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    return "ffmpeg"
 
 
 def merge_wav_files(wav_paths: list[str], output_path: str) -> str:
@@ -63,9 +91,12 @@ def export_mp3(wav_path: str, output_path: str) -> str:
     Returns:
         Caminho do arquivo MP3.
     """
+    ffmpeg_bin = get_ffmpeg_executable()
+    logger.info(f"Utilizando FFmpeg em: {ffmpeg_bin}")
+
     result = subprocess.run(
         [
-            "ffmpeg", "-y",
+            ffmpeg_bin, "-y",
             "-i", wav_path,
             "-codec:a", "libmp3lame",
             "-b:a", "192k",

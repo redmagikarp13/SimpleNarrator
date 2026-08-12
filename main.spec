@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import shutil
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 block_cipher = None
@@ -8,6 +9,11 @@ block_cipher = None
 # Coletar assets do CustomTkinter e dependências C++/ONNX do Piper
 datas = collect_data_files('customtkinter')
 binaries = []
+
+# Coletar executável do FFmpeg se estiver disponível no sistema
+ffmpeg_bin = shutil.which('ffmpeg')
+if ffmpeg_bin and os.path.isfile(ffmpeg_bin):
+    binaries.append((ffmpeg_bin, '.'))
 
 for pkg in ['piper', 'piper_phonemize', 'onnxruntime']:
     try:

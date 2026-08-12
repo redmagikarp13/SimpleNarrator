@@ -221,7 +221,7 @@ Para compilar o projeto em um arquivo executável único no Windows:
 3. O executável final será gerado no diretório `dist/SimpleNarrator.exe`.
 
 > [!NOTE]
-> O executável compilado continuará necessitando do `ffmpeg` instalado no sistema operacional do usuário para realizar a exportação final para MP3.
+> Se o `ffmpeg` estiver instalado na máquina onde a compilação é realizada, o PyInstaller incluirá automaticamente o binário do FFmpeg dentro do executável gerado, permitindo que os usuários finais utilizem a exportação MP3 sem precisar instalar o FFmpeg separadamente.
 
 ---
 
