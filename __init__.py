@@ -1,0 +1,1 @@
+"""SimpleNarrator — Pacote raiz."""
