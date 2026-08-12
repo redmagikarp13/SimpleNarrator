@@ -36,6 +36,8 @@ class PiperEngine(BaseEngine):
     def initialize(self) -> None:
         """Piper não precisa de inicialização global, apenas carregar o modelo."""
         try:
+            logging.getLogger("piper").setLevel(logging.WARNING)
+            logging.getLogger("piper.voice").setLevel(logging.WARNING)
             from piper.voice import PiperVoice
             self._state = EngineState.IDLE
         except ImportError:
@@ -112,9 +114,15 @@ class PiperEngine(BaseEngine):
         temp_file = os.path.join(tempfile.gettempdir(), f"sn_piper_{uuid.uuid4().hex}.wav")
         
         try:
+            from piper.config import SynthesisConfig
+            syn_config = SynthesisConfig(length_scale=self._rate_scale)
+        except Exception:
+            syn_config = None
+
+        try:
             import wave
             wav_file = None
-            for chunk in self._voice.synthesize(text):
+            for chunk in self._voice.synthesize(text, syn_config=syn_config):
                 if wav_file is None:
                     wav_file = wave.open(temp_file, "wb")
                     wav_file.setnchannels(chunk.sample_channels)
@@ -131,7 +139,7 @@ class PiperEngine(BaseEngine):
                 self._state = EngineState.IDLE
                 return None
         except Exception as e:
-            logger.error(f"Erro ao sintetizar via Piper: {e}")
+            logger.error(f"Erro ao sintetizar via Piper: {e}", exc_info=True)
             self._state = EngineState.ERROR
             return None
 

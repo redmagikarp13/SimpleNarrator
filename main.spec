@@ -1,12 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 block_cipher = None
 
-# Coletar assets do CustomTkinter (temas e estilos)
+# Coletar assets do CustomTkinter e dependências C++/ONNX do Piper
 datas = collect_data_files('customtkinter')
+binaries = []
+
+for pkg in ['piper', 'piper_phonemize', 'onnxruntime']:
+    try:
+        datas.extend(collect_data_files(pkg))
+    except Exception:
+        pass
+    try:
+        binaries.extend(collect_dynamic_libs(pkg))
+    except Exception:
+        pass
 
 hidden_imports = [
     'ui',
@@ -25,6 +36,10 @@ hidden_imports = [
     'customtkinter',
     'fitz',
     'piper',
+    'piper.voice',
+    'piper.config',
+    'piper_phonemize',
+    'onnxruntime',
     'requests',
     'pyttsx3',
 ]
@@ -32,7 +47,7 @@ hidden_imports = [
 a = Analysis(
     ['main.py'],
     pathex=['.'],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],

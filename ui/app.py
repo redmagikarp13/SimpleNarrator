@@ -510,6 +510,9 @@ class NarratorApp(ctk.CTk):
             if pbar: self.after(0, lambda p=(chunk.index + 1)/total: pbar.set(p))
 
         if not self._is_processing or not audio_files:
+            if plabel:
+                self.after(0, lambda: plabel.configure(text="Falha na síntese. Instale o modelo na aba Modelos.", text_color="red"))
+            self.after(0, lambda: messagebox.showerror("Erro de Síntese", "Nenhum áudio foi gerado.\n\nVerifique se o modelo de voz do Piper está baixado na aba 'Modelos Piper' ou se os drivers CUDA estão configurados corretamente."))
             if on_finish: self.after(0, on_finish)
             return
 
