@@ -67,6 +67,11 @@ jobs:
       - name: Compress Tarball
         run: tar -czvf SimpleNarrator-Linux.tar.gz -C dist SimpleNarrator
 
+      - name: Prepare Flatpak Binary
+        run: |
+          mkdir -p flatpak-bin
+          cp dist/SimpleNarrator flatpak-bin/SimpleNarrator
+
       - name: Build Flatpak Package
         run: |
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
