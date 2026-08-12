@@ -5,6 +5,7 @@ Ponto de entrada principal da aplicação.
 
 import logging
 import sys
+from ui.app import NarratorApp
 
 # Configurar logging
 logging.basicConfig(
@@ -18,8 +19,6 @@ logging.basicConfig(
 
 def main():
     """Inicia a aplicação SimpleNarrator."""
-    from ui.app import NarratorApp
-
     app = NarratorApp()
     app.mainloop()
 
