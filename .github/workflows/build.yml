@@ -30,14 +30,14 @@ jobs:
       - name: Build Windows Executable
         run: pyinstaller main.spec
 
-      - name: Compress Build
-        run: Compress-Archive -Path dist/SimpleNarrator\* -DestinationPath SimpleNarrator-Windows.zip
+      - name: Rename Single Executable
+        run: Move-Item dist/SimpleNarrator.exe SimpleNarrator-Windows.exe
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleNarrator-Windows.zip
-          path: SimpleNarrator-Windows.zip
+          name: SimpleNarrator-Windows.exe
+          path: SimpleNarrator-Windows.exe
 
   build-ubuntu:
     runs-on: ubuntu-latest
@@ -65,7 +65,7 @@ jobs:
         run: pyinstaller main.spec
 
       - name: Compress Tarball
-        run: tar -czvf SimpleNarrator-Linux.tar.gz -C dist/SimpleNarrator .
+        run: tar -czvf SimpleNarrator-Linux.tar.gz -C dist SimpleNarrator
 
       - name: Build Flatpak Package
         run: |
@@ -126,7 +126,7 @@ jobs:
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
-          name: SimpleNarrator-Windows.zip
+          name: SimpleNarrator-Windows.exe
 
       - name: Download Linux Artifact
         uses: actions/download-artifact@v4
@@ -147,7 +147,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            SimpleNarrator-Windows.zip
+            SimpleNarrator-Windows.exe
             SimpleNarrator-Linux.tar.gz
             SimpleNarrator-Linux.flatpak
             SimpleNarrator-macOS.zip

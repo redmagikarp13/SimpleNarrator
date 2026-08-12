@@ -16,6 +16,5 @@ modules:
   - name: SimpleNarrator
     buildsystem: simple
     build-commands:
-      - mkdir -p /app/bin
-      - cp -r dist/SimpleNarrator/* /app/bin/
+      - install -D -m 755 dist/SimpleNarrator /app/bin/SimpleNarrator
       - install -D -m 644 com.github.redmagikarp13.SimpleNarrator.desktop /app/share/applications/com.github.redmagikarp13.SimpleNarrator.desktop
