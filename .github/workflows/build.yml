@@ -77,8 +77,8 @@ jobs:
         run: |
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
           flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
-          flatpak-builder --user --disable-rofiles-fuse build-dir com.github.redmagikarp13.SimpleNarrator.yml --force-clean
-          flatpak build-bundle build-dir SimpleNarrator-Linux.flatpak com.github.redmagikarp13.SimpleNarrator
+          flatpak-builder --user --disable-rofiles-fuse --repo=repo-dir build-dir com.github.redmagikarp13.SimpleNarrator.yml --force-clean
+          flatpak build-bundle repo-dir SimpleNarrator-Linux.flatpak com.github.redmagikarp13.SimpleNarrator
 
       - name: Upload Tarball Artifact
         uses: actions/upload-artifact@v4
