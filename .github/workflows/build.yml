@@ -71,6 +71,7 @@ jobs:
         run: |
           mkdir -p flatpak-bin
           cp dist/SimpleNarrator flatpak-bin/SimpleNarrator
+          cp com.github.redmagikarp13.SimpleNarrator.desktop flatpak-bin/com.github.redmagikarp13.SimpleNarrator.desktop
 
       - name: Build Flatpak Package
         run: |

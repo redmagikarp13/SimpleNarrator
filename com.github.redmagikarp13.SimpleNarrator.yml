@@ -15,6 +15,9 @@ finish-args:
 modules:
   - name: SimpleNarrator
     buildsystem: simple
+    sources:
+      - type: dir
+        path: flatpak-bin
     build-commands:
-      - install -D -m 755 flatpak-bin/SimpleNarrator /app/bin/SimpleNarrator
+      - install -D -m 755 SimpleNarrator /app/bin/SimpleNarrator
       - install -D -m 644 com.github.redmagikarp13.SimpleNarrator.desktop /app/share/applications/com.github.redmagikarp13.SimpleNarrator.desktop
