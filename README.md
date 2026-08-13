@@ -22,12 +22,20 @@ Possui uma interface moderna em tema escuro e suporta motores de síntese híbri
 
 ---
 
+## 📥 Download
+
+Você pode baixar as versões compiladas (executáveis `.exe` para Windows, binários Linux e macOS) diretamente pela página de [**Releases no GitHub**](https://github.com/redmagikarp13/SimpleNarrator/releases).
+
+> Cada release é gerada automaticamente pelo GitHub Actions ao criar uma tag (ex: `v1.0.14`). Os executáveis já incluem todas as dependências embutidas e não precisam de instalação de Python.
+
+---
+
 ## ✨ Recursos Principais
 
 - 🤖 **Motores de Síntese Híbridos**:
   - **Motor Nativo (S.O.)**: Leve e instantâneo, utilizando APIs do sistema (SAPI5 no Windows, NSSpeech no macOS, eSpeak no Linux) via `pyttsx3`.
   - **Motor IA (Piper TTS)**: Vozes neurais locais ultra-realistas rodando sobre modelos ONNX com qualidade humana.
-- 🚀 **Aceleração por Hardware (GPU CUDA)**: Opção de alternar entre CPU e GPU NVIDIA para sintetização ultrarrápida de grandes volumes de texto.
+- 🚀 **Aceleração por GPU (sob demanda)**: Instale o suporte a GPU NVIDIA CUDA diretamente pela interface, sem precisar configurar nada manualmente. O executável fica mais leve e você instala a GPU apenas quando precisar.
 - 📥 **Gerenciador de Modelos Integrado**: Baixe e instale modelos de voz de diversos idiomas (incluindo PT-BR) diretamente pela interface gráfica, integrando com o repositório Hugging Face.
 - 📚 **Processamento em Lote (Batch)**: Converta pastas com múltiplos livros, artigos e documentos `.txt` ou `.pdf` de forma automatizada para MP3.
 - 📄 **Leitor Inteligente de PDF e TXT**:
@@ -84,7 +92,8 @@ O FFmpeg é necessário para mesclar e converter os arquivos de áudio temporár
 > Certifique-se de que o comando `ffmpeg` esteja acessível no **PATH** do seu sistema. Teste executando `ffmpeg -version` no terminal.
 
 ### 3. *(Opcional)* Aceleração por GPU NVIDIA CUDA
-Se deseja usar aceleração por GPU no motor Piper TTS, certifique-se de ter os drivers NVIDIA atualizados e o Toolkit CUDA instalado. Você pode baixar em:
+Se deseja usar aceleração por GPU no motor Piper TTS, basta ter os **drivers NVIDIA** atualizados. O suporte GPU (bibliotecas `onnxruntime-gpu`, `cuDNN`, `cuBLAS`) pode ser instalado diretamente pela aba **Modelos Piper** dentro do próprio aplicativo, sem necessidade de configuração manual.
+
 👉 [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads)
 
 ---
@@ -144,7 +153,7 @@ A aplicação é dividida em **3 abas principais**:
 1. **Digite ou importe** seu texto na área central (ou clique em **Importar arquivo** para carregar um `.txt` ou `.pdf`).
 2. Na barra lateral esquerda, configure:
    - **Motor**: Escolha entre `Nativo do S.O. (CPU)` ou `IA - Piper TTS (CPU/GPU)`.
-   - **Aceleração GPU (CUDA)**: Marque a opção se possuir placa NVIDIA configurada.
+   - **Aceleração GPU (CUDA)**: Marque a opção se possuir placa NVIDIA e tiver instalado o suporte GPU pela aba Modelos.
    - **Voz**: Selecione a voz desejada na lista.
    - **Velocidade**: Ajuste a barra de velocidade de leitura ($0.5\times$ a $2.0\times$).
 3. Clique no botão **Gerar MP3**, escolha a pasta e o nome do arquivo final.
@@ -161,13 +170,14 @@ Perfeito para converter coleções inteiras de arquivos de uma só vez:
 
 ---
 
-#### 3. Aba **Modelos Piper** (Download de Vozes IA)
-Gerencie e baixe vozes neurais diretamente da comunidade:
+#### 3. Aba **Modelos Piper** (Download de Vozes IA e GPU)
+Gerencie vozes neurais e o suporte a GPU diretamente:
 1. Clique em **Carregar Lista do Servidor** para atualizar o catálogo com centenas de vozes neurais disponíveis no Hugging Face (`rhasspy/piper-voices`).
 2. As vozes em **Português do Brasil (`pt_BR`)** são exibidas automaticamente no topo da lista.
 3. Clique no botão **Baixar** ao lado do modelo desejado (ex: `pt_BR-faber-medium`).
 4. Assim que o download for concluído, a nova voz estará imediatamente disponível para uso na aba **Narrador**.
 5. Se não precisar mais de uma voz, clique no botão **Excluir** para liberar espaço no disco.
+6. **GPU sob demanda**: Use os botões **Instalar Suporte GPU** / **Remover Suporte GPU** para gerenciar a aceleração por hardware. O status é exibido ao lado (instalado ou CPU apenas).
 
 ---
 
@@ -239,8 +249,9 @@ Para compilar o projeto em um arquivo executável único no Windows:
 <summary><b>2. O Piper TTS falha ao carregar a voz no modo GPU (CUDA)</b></summary>
 <br>
 
-- Se a caixa "Aceleração GPU (CUDA)" estiver marcada mas sua máquina não possuir suporte CUDA ou bibliotecas ONNX GPU instaladas, o SimpleNarrator fará um **fallback automático para CPU** com segurança.
-- Para habilitar aceleração real via GPU, instale os drivers da NVIDIA e certifique-se de possuir a versão com suporte a CUDA do `onnxruntime-gpu`.
+- Se a caixa "Aceleração GPU (CUDA)" estiver marcada mas o suporte GPU não estiver instalado, o SimpleNarrator fará um **fallback automático para CPU** com segurança.
+- Para habilitar aceleração real via GPU, vá na aba **Modelos Piper** e clique em **Instalar Suporte GPU**. As bibliotecas necessárias (`onnxruntime-gpu`, `cuDNN`, `cuBLAS`) serão baixadas e configuradas automaticamente.
+- Certifique-se de ter os **drivers NVIDIA** atualizados.
 </details>
 
 <details>

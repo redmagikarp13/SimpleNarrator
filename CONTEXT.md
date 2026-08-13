@@ -81,27 +81,33 @@ pyinstaller main.spec
 
 Para usar aceleração por GPU no motor Piper TTS no Windows:
 
-1. **CUDA Toolkit** instalado (ex: 13.3) — [download NVIDIA](https://developer.nvidia.com/cuda-downloads)
-2. **onnxruntime-gpu** e **nvidia-cudnn-cu12** instalados via `requirements.txt`
+1. **Drivers NVIDIA** atualizados
+2. **Suporte GPU instalado pela interface** — na aba **Modelos Piper**, clique em **Instalar Suporte GPU**
+   - Isso baixa automaticamente: `onnxruntime-gpu`, `nvidia-cudnn-cu12`, `nvidia-cublas-cu12`, `nvidia-cuda-nvrtc-cu12`
 3. As DLLs da cuDNN/cuBLAS são registradas automaticamente pelo código em `_register_nvidia_dll_paths()`
 
-**Nota:** As dependências de GPU são condicionais por plataforma no `requirements.txt`:
-- Windows: `onnxruntime-gpu` + `nvidia-cudnn-cu12`
-- Linux/macOS: `onnxruntime` (CPU apenas)
+**Nota:** As dependências GPU **não** vêm mais no `requirements.txt` por padrão. O `requirements.txt` inclui apenas `onnxruntime>=1.28.0` (CPU). As libs GPU são instaladas/removidas sob demanda via `PiperEngine.install_gpu_support()` e `PiperEngine.uninstall_gpu_support()`, mantendo o executável menor.
 
-## Correções Recentes (v1.0.13)
+## Correções Recentes (v1.0.14)
 
-### Estabilidade na Síntese
+### GPU Sob Demanda
+- **Bibliotecas GPU removidas do `requirements.txt`** — apenas `onnxruntime` (CPU) vem por padrão, executável mais leve
+- **Instalação pela interface** — botões "Instalar Suporte GPU" / "Remover Suporte GPU" na aba Modelos Piper
+- **Métodos estáticos** — `PiperEngine.install_gpu_support()`, `uninstall_gpu_support()`, `is_gpu_available()`
+- **Checkbox GPU dinâmico** — aparece apenas quando as libs GPU estão instaladas
+- **`main.spec` limpo** — sem pacotes nvidia no build padrão
+
+### Estabilidade na Síntese (v1.0.13)
 - **Tratamento de exceção no worker** — erros em chunks individuais não travam mais a aplicação
 - **Fallback automático CPU** — se a GPU falhar, o motor recarrega a voz em CPU automaticamente
 - **Thread safety** — lock (`threading.Lock`) protege acesso concorrente ao ONNX Runtime
 - **Fix de file handle** — WAV files agora usam `try/finally` para garantir fechamento
 
-### Suporte a GPU no Execável PyInstaller
-- **Coleta de DLLs NVIDIA** — `main.spec` agora coleta `nvidia.cudnn`, `nvidia.cublas`, `nvidia.cuda_nvrtc`
-- **Hidden imports** — pacotes `nvidia.*` adicionados para detecção pelo PyInstaller
-- **Registro multi-ambiente** — `_register_nvidia_dll_paths()` funciona tanto em desenvolvimento quanto no bundle PyInstaller (via `sys._MEIPASS`)
+### Registro de DLLs NVIDIA
+- **`_register_nvidia_dll_paths()`** — registra DLLs cuDNN/cuBLAS via `os.add_dll_directory()` + PATH
+- **Multi-ambiente** — funciona tanto em desenvolvimento quanto no bundle PyInstaller (via `sys._MEIPASS`)
+- **Namespace packages** — usa `__path__` ao invés de `__file__` para pacotes `nvidia.*`
 
 ### Build Multiplataforma
-- **Dependências condicionais** — `requirements.txt` usa marcadores `sys_platform` para evitar erros no CI Ubuntu/macOS
-- **Workflow GitHub Actions** — release automática via tag `v*` (ex: `v1.0.13`)
+- **Dependências CPU apenas** — `requirements.txt` usa apenas `onnxruntime>=1.28.0` (sem GPU)
+- **Workflow GitHub Actions** — release automática via tag `v*` (ex: `v1.0.14`)
