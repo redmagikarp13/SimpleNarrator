@@ -6,5 +6,6 @@ numpy>=1.24.0
 PyMuPDF>=1.23.0
 piper-tts>=1.2.0
 requests>=2.31.0
-onnxruntime-gpu>=1.28.0
-nvidia-cudnn-cu12>=9.0.0
+onnxruntime-gpu>=1.28.0; sys_platform == 'win32'
+nvidia-cudnn-cu12>=9.0.0; sys_platform == 'win32'
+onnxruntime>=1.28.0; sys_platform != 'win32'
