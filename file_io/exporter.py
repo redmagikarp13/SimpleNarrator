@@ -94,21 +94,31 @@ def export_mp3(wav_path: str, output_path: str) -> str:
     ffmpeg_bin = get_ffmpeg_executable()
     logger.info(f"Utilizando FFmpeg em: {ffmpeg_bin}")
 
-    result = subprocess.run(
-        [
-            ffmpeg_bin, "-y",
-            "-i", wav_path,
-            "-codec:a", "libmp3lame",
-            "-b:a", "192k",
-            output_path,
-        ],
-        capture_output=True,
-        text=True,
-    )
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg_bin, "-y",
+                "-i", wav_path,
+                "-codec:a", "libmp3lame",
+                "-b:a", "192k",
+                output_path,
+            ],
+            capture_output=True,
+            text=True,
+            creationflags=creationflags,
+        )
+    except FileNotFoundError:
+        raise RuntimeError(f"FFmpeg não encontrado em '{ffmpeg_bin}'. Verifique se o FFmpeg está instalado.")
+
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg falhou: {result.stderr}")
+        raise RuntimeError(f"ffmpeg falhou ({result.returncode}): {result.stderr}")
     logger.info(f"MP3 exportado em: {output_path}")
     return output_path
+
 
 
 def merge_and_export(

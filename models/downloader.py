@@ -76,30 +76,32 @@ class ModelDownloader:
         for i, (remote_path, local_path) in enumerate(files_to_download.items()):
             url = BASE_URL + remote_path
             try:
-                response = requests.get(url, stream=True, timeout=10)
+                response = requests.get(url, stream=True, timeout=(15, 60))
                 response.raise_for_status()
                 total_size = int(response.headers.get("content-length", 0))
                 
-                block_size = 1024 * 8  # 8 KB
+                block_size = 1024 * 64  # 64 KB
                 downloaded = 0
                 
                 with open(local_path, "wb") as f:
-                    for data in response.iter_content(block_size):
-                        f.write(data)
-                        downloaded += len(data)
-                        if progress_callback and total_size > 0:
-                            # Calcular progresso do arquivo atual ponderado pelo total de arquivos
-                            file_progress = downloaded / total_size
-                            overall_progress = (i + file_progress) / total_files
-                            
-                            filename = os.path.basename(local_path)
-                            progress_callback(overall_progress, f"Baixando {filename}...")
+                    for data in response.iter_content(chunk_size=block_size):
+                        if data:
+                            f.write(data)
+                            downloaded += len(data)
+                            if progress_callback and total_size > 0:
+                                file_progress = downloaded / total_size
+                                overall_progress = (i + file_progress) / total_files
+                                filename = os.path.basename(local_path)
+                                progress_callback(overall_progress, f"Baixando {filename} ({int(file_progress*100)}%)...")
                             
             except Exception as e:
                 logger.error(f"Erro ao baixar {url}: {e}")
                 # Limpar arquivos parciais
                 if os.path.exists(local_path):
-                    os.remove(local_path)
+                    try:
+                        os.remove(local_path)
+                    except OSError:
+                        pass
                 return False
 
         if progress_callback:

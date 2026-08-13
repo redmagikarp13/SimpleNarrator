@@ -12,11 +12,26 @@ import platform
 import tempfile
 import wave
 import logging
+import threading
 from typing import Optional
 
 from engines.base_engine import BaseEngine, EngineState, VoiceInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _init_com_if_windows():
+    """Garante que o COM Apartment esteja inicializado na thread atual no Windows."""
+    if sys.platform == "win32":
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+        except Exception:
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
 
 
 class NativeEngine(BaseEngine):
@@ -28,81 +43,134 @@ class NativeEngine(BaseEngine):
         self._current_voice: Optional[str] = None
         self._rate: float = 1.0
         self._pitch: float = 1.0
+        self._lock = threading.Lock()
 
     def initialize(self) -> None:
-        try:
-            import pyttsx3
-            self._engine = pyttsx3.init()
-            # Aplicar configurações padrão
-            self._engine.setProperty("rate", int(self._rate * 200))
-            self._state = EngineState.IDLE
-            logger.info("Motor nativo inicializado com sucesso.")
-        except Exception as e:
-            self._state = EngineState.ERROR
-            logger.error(f"Falha ao inicializar motor nativo: {e}")
-            raise
+        with self._lock:
+            _init_com_if_windows()
+            try:
+                import pyttsx3
+                self._engine = pyttsx3.init()
+                self._engine.setProperty("rate", int(self._rate * 200))
+                self._state = EngineState.IDLE
+                logger.info("Motor nativo inicializado com sucesso.")
+            except Exception as e:
+                self._state = EngineState.ERROR
+                logger.error(f"Falha ao inicializar motor nativo: {e}")
+                raise
 
     def get_available_voices(self) -> list[VoiceInfo]:
-        if not self._engine:
-            return []
-        voices = self._engine.getProperty("voices") or []
-        result = []
-        for v in voices:
-            lang = "unknown"
-            # pyttsx3 retorna idiomas de formas diferentes por SO
-            if hasattr(v, "languages") and v.languages:
-                lang = v.languages[0] if isinstance(v.languages, list) else v.languages
-            result.append(
-                VoiceInfo(
-                    id=v.id,
-                    name=v.name,
-                    language=str(lang),
-                    gender=getattr(v, "gender", None),
-                    engine_type="native",
+        with self._lock:
+            _init_com_if_windows()
+            if not self._engine:
+                try:
+                    import pyttsx3
+                    self._engine = pyttsx3.init()
+                except Exception:
+                    return []
+            try:
+                voices = self._engine.getProperty("voices") or []
+            except Exception as e:
+                logger.error(f"Erro ao obter vozes nativas: {e}")
+                return []
+
+            result = []
+            for v in voices:
+                lang = "unknown"
+                if hasattr(v, "languages") and v.languages:
+                    lang = v.languages[0] if isinstance(v.languages, list) else v.languages
+                result.append(
+                    VoiceInfo(
+                        id=v.id,
+                        name=v.name,
+                        language=str(lang),
+                        gender=getattr(v, "gender", None),
+                        engine_type="native",
+                    )
                 )
-            )
-        return result
+            return result
 
     def set_voice(self, voice_id: str) -> None:
-        if self._engine:
-            self._engine.setProperty("voice", voice_id)
+        with self._lock:
+            _init_com_if_windows()
             self._current_voice = voice_id
+            if self._engine:
+                try:
+                    self._engine.setProperty("voice", voice_id)
+                except Exception as e:
+                    logger.warning(f"Erro ao definir voz nativa {voice_id}: {e}")
 
     def set_rate(self, rate: float) -> None:
-        self._rate = rate
-        if self._engine:
-            # pyttsx3 usa words-per-minute (~200 = normal)
-            self._engine.setProperty("rate", int(rate * 200))
+        with self._lock:
+            _init_com_if_windows()
+            self._rate = rate
+            if self._engine:
+                try:
+                    self._engine.setProperty("rate", int(rate * 200))
+                except Exception:
+                    pass
 
     def set_pitch(self, pitch: float) -> None:
-        self._pitch = pitch
-        if self._engine:
-            # pyttsx3 usa volume como proxy; pitch real depende do SO
-            self._engine.setProperty("volume", min(max(pitch, 0.0), 1.0))
+        with self._lock:
+            _init_com_if_windows()
+            self._pitch = pitch
+            if self._engine:
+                try:
+                    self._engine.setProperty("volume", min(max(pitch, 0.0), 1.0))
+                except Exception:
+                    pass
 
     def synthesize(self, text: str) -> Optional[str]:
-        if not self._engine:
-            return None
-        try:
-            self._state = EngineState.SPEAKING
-            import uuid
+        with self._lock:
+            _init_com_if_windows()
+            if not self._engine:
+                try:
+                    import pyttsx3
+                    self._engine = pyttsx3.init()
+                except Exception as e:
+                    logger.error(f"Não foi possível instanciar pyttsx3: {e}")
+                    return None
 
-            tmp_path = os.path.join(
-                tempfile.gettempdir(),
-                f"sn_native_{uuid.uuid4().hex[:8]}.wav",
-            )
-            self._engine.save_to_file(text, tmp_path)
-            # Usar iterate() em vez de runAndWait() para evitar
-            # o bug conhecido do pyttsx3 que trava no segundo uso.
-            self._engine.startLoop(False)
-            self._engine.iterate()
-            self._engine.endLoop()
-            self._state = EngineState.IDLE
-            return tmp_path
-        except Exception as e:
-            self._state = EngineState.ERROR
-            logger.error(f"Erro na síntese nativa: {e}")
-            return None
+            try:
+                self._state = EngineState.SPEAKING
+                import uuid
+
+                # Reaplicar configurações
+                if self._current_voice:
+                    try:
+                        self._engine.setProperty("voice", self._current_voice)
+                    except Exception:
+                        pass
+                self._engine.setProperty("rate", int(self._rate * 200))
+                self._engine.setProperty("volume", min(max(self._pitch, 0.0), 1.0))
+
+                tmp_path = os.path.join(
+                    tempfile.gettempdir(),
+                    f"sn_native_{uuid.uuid4().hex[:8]}.wav",
+                )
+                self._engine.save_to_file(text, tmp_path)
+                
+                # Executar ciclo de processamento com segurança
+                loop_started = False
+                try:
+                    self._engine.startLoop(False)
+                    loop_started = True
+                    self._engine.iterate()
+                finally:
+                    if loop_started:
+                        try:
+                            self._engine.endLoop()
+                        except Exception:
+                            pass
+
+                self._state = EngineState.IDLE
+                if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+                    return tmp_path
+                return None
+            except Exception as e:
+                self._state = EngineState.ERROR
+                logger.error(f"Erro na síntese nativa: {e}", exc_info=True)
+                return None
 
     def synthesize_stream(self, text: str):
         # pyttsx3 não suporta streaming nativo;

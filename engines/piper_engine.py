@@ -44,13 +44,32 @@ def _register_nvidia_dll_paths():
     except (ImportError, Exception):
         pass
     
+    # Caso 3: CUDA instalado no sistema (NVIDIA GPU Computing Toolkit)
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path:
+        bin_dir = os.path.join(cuda_path, "bin")
+        if os.path.isdir(bin_dir) and bin_dir not in dirs_to_add:
+            dirs_to_add.append(bin_dir)
+
+    # Caso 4: Buscar caminhos padrões do CUDA Toolkit no Windows
+    if sys.platform == "win32":
+        default_cuda_root = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+        if os.path.isdir(default_cuda_root):
+            try:
+                for ver_dir in os.listdir(default_cuda_root):
+                    bin_dir = os.path.join(default_cuda_root, ver_dir, "bin")
+                    if os.path.isdir(bin_dir) and bin_dir not in dirs_to_add:
+                        dirs_to_add.append(bin_dir)
+            except Exception:
+                pass
+
     # Registrar todos os diretórios encontrados
     for path in dirs_to_add:
         try:
             os.add_dll_directory(path)
         except Exception:
             pass
-    
+
     # Também adicionar ao PATH para garantir que dependências cruzadas sejam encontradas
     if dirs_to_add:
         current_path = os.environ.get("PATH", "")
@@ -58,6 +77,7 @@ def _register_nvidia_dll_paths():
         logger.info(f"DLLs NVIDIA registrados no PATH ({len(dirs_to_add)} diretórios)")
     else:
         logger.debug("Nenhuma DLL NVIDIA encontrada.")
+
 
 class PiperEngine(BaseEngine):
     """Motor de TTS baseado no Piper TTS (modelos ONNX)."""
@@ -280,9 +300,39 @@ class PiperEngine(BaseEngine):
             return False
 
     @staticmethod
-    def install_gpu_support(progress_callback=None) -> bool:
-        """Instala onnxruntime-gpu e nvidia-cudnn-cu12 via pip."""
+    def _get_python_executable() -> Optional[str]:
+        """Retorna o interpretador Python apropriado para pip (apenas em desenvolvimento)."""
+        if getattr(sys, "frozen", False):
+            return None
+        exe = sys.executable
+        if exe and os.path.isfile(exe):
+            if "pythonw" in os.path.basename(exe).lower():
+                candidate = exe.lower().replace("pythonw.exe", "python.exe").replace("pythonw", "python")
+                if os.path.isfile(candidate):
+                    return candidate
+            return exe
+        import shutil
+        return shutil.which("python")
+
+    @classmethod
+    def install_gpu_support(cls, progress_callback=None) -> bool:
+        """Instala onnxruntime-gpu e nvidia-cudnn-cu12 via pip (modo desenvolvimento)."""
+        if getattr(sys, "frozen", False):
+            logger.warning("Instalação via pip não é suportada no executável empacotado.")
+            if progress_callback:
+                progress_callback(1.0, "Modo executável: use a versão CPU ou instale o CUDA Toolkit no sistema.")
+            return False
+
+        python_bin = cls._get_python_executable()
+        if not python_bin:
+            logger.error("Interpretador Python não encontrado para instalação de pacotes.")
+            return False
+
         import subprocess
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         packages = [
             ("onnxruntime-gpu>=1.28.0", "Instalando ONNX Runtime GPU..."),
             ("nvidia-cudnn-cu12>=9.0.0", "Instalando cuDNN (pode demorar)..."),
@@ -292,43 +342,58 @@ class PiperEngine(BaseEngine):
                 progress_callback(i / len(packages), msg)
             try:
                 result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", pkg, "--quiet"],
-                    capture_output=True, text=True, timeout=600
+                    [python_bin, "-m", "pip", "install", pkg, "--quiet"],
+                    capture_output=True, text=True, timeout=600,
+                    creationflags=creationflags,
                 )
                 if result.returncode != 0:
                     logger.error(f"Erro ao instalar {pkg}: {result.stderr}")
                     return False
             except Exception as e:
-                logger.error(f"Excecao ao instalar {pkg}: {e}")
+                logger.error(f"Exceção ao instalar {pkg}: {e}")
                 return False
         if progress_callback:
-            progress_callback(1.0, "Instalacao concluida!")
+            progress_callback(1.0, "Instalação concluída!")
         logger.info("Suporte GPU instalado com sucesso.")
         return True
 
-    @staticmethod
-    def uninstall_gpu_support() -> bool:
-        """Remove bibliotecas GPU e reverte para onnxruntime (CPU)."""
+    @classmethod
+    def uninstall_gpu_support(cls) -> bool:
+        """Remove bibliotecas GPU e reverte para onnxruntime (CPU) (modo desenvolvimento)."""
+        if getattr(sys, "frozen", False):
+            logger.warning("Desinstalação via pip não é suportada no executável empacotado.")
+            return False
+
+        python_bin = cls._get_python_executable()
+        if not python_bin:
+            return False
+
         import subprocess
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         packages_to_remove = ["onnxruntime-gpu", "nvidia-cudnn-cu12", "nvidia-cublas-cu12", "nvidia-cuda-nvrtc-cu12"]
         for pkg in packages_to_remove:
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "pip", "uninstall", "-y", pkg],
-                    capture_output=True, timeout=120
+                    [python_bin, "-m", "pip", "uninstall", "-y", pkg],
+                    capture_output=True, timeout=120,
+                    creationflags=creationflags,
                 )
             except Exception as e:
                 logger.debug(f"Erro ao desinstalar {pkg}: {e}")
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "onnxruntime>=1.28.0", "--quiet"],
-                capture_output=True, text=True, timeout=300
+                [python_bin, "-m", "pip", "install", "onnxruntime>=1.28.0", "--quiet"],
+                capture_output=True, text=True, timeout=300,
+                creationflags=creationflags,
             )
             if result.returncode != 0:
                 logger.error(f"Erro ao reinstalar onnxruntime CPU: {result.stderr}")
                 return False
         except Exception as e:
-            logger.error(f"Excecao ao reinstalar onnxruntime CPU: {e}")
+            logger.error(f"Exceção ao reinstalar onnxruntime CPU: {e}")
             return False
         logger.info("Suporte GPU removido. Usando CPU agora.")
         return True

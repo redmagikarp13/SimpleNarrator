@@ -2,7 +2,7 @@
 
 import os
 import shutil
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 block_cipher = None
 
@@ -37,6 +37,7 @@ hidden_imports = [
     'file_io.exporter',
     'audio',
     'audio.chunker',
+    'audio.player',
     'models',
     'models.downloader',
     'customtkinter',
@@ -48,7 +49,28 @@ hidden_imports = [
     'onnxruntime',
     'requests',
     'pyttsx3',
+    'pyttsx3.drivers',
+    'pyttsx3.drivers.sapi5',
+    'pyttsx3.drivers.espeak',
+    'pyttsx3.drivers.nsss',
+    'comtypes',
+    'sounddevice',
+    'soundfile',
+    'numpy',
+    'darkdetect',
+    'PIL',
+    'PIL.Image',
+    'PIL.ImageTk',
 ]
+try:
+    hidden_imports.extend(collect_submodules('pyttsx3'))
+except Exception:
+    pass
+try:
+    hidden_imports.extend(collect_submodules('customtkinter'))
+except Exception:
+    pass
+
 
 a = Analysis(
     ['main.py'],

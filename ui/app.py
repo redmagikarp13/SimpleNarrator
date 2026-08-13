@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 import threading
+import sys
 from typing import Optional
 from pathlib import Path
 
@@ -26,6 +27,21 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
+def get_models_dir() -> str:
+    """Retorna o caminho absoluto do diretório de modelos.
+    
+    No executável compilado (PyInstaller), usa a pasta 'models' ao lado do .exe.
+    No modo desenvolvimento, usa a pasta 'models' na raiz do projeto.
+    """
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    models_path = os.path.join(base_dir, "models")
+    os.makedirs(models_path, exist_ok=True)
+    return models_path
+
+
 class NarratorApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -34,10 +50,13 @@ class NarratorApp(ctk.CTk):
         self.geometry("900x650")
         self.minsize(800, 500)
 
+        # ── Diretório de Modelos ──
+        self.models_dir = get_models_dir()
+
         # ── Estado da aplicação ──
         self._engines: dict[str, BaseEngine] = {
             "native": NativeEngine(),
-            "piper": PiperEngine(),
+            "piper": PiperEngine(models_dir=self.models_dir),
         }
         self._active_engine: Optional[BaseEngine] = None
         self._voices: list[VoiceInfo] = []
@@ -46,7 +65,7 @@ class NarratorApp(ctk.CTk):
         self._batch_output_dir = ""
         
         # Gerenciador de downloads do Piper
-        self.downloader = ModelDownloader(os.path.abspath("models"))
+        self.downloader = ModelDownloader(self.models_dir)
 
         # ── Construir interface ──
         self._build_ui()
@@ -216,13 +235,18 @@ class NarratorApp(ctk.CTk):
         ctk.CTkLabel(path_frame, text=f"Pasta dos Modelos: {models_dir_path}", font=ctk.CTkFont(size=12), text_color="gray").pack(side="left", padx=5)
         
         def open_models_folder():
+            os.makedirs(models_dir_path, exist_ok=True)
             if os.name == 'nt':
                 os.startfile(models_dir_path)
+            elif sys.platform == 'darwin':
+                import subprocess
+                subprocess.Popen(['open', models_dir_path])
             else:
                 import subprocess
                 subprocess.Popen(['xdg-open', models_dir_path])
 
         ctk.CTkButton(path_frame, text="Abrir Pasta", command=open_models_folder, width=90, height=24, fg_color="#455A64").pack(side="left", padx=10)
+
 
         ctk.CTkLabel(self.tab_modelos, text="Baixar novos modelos de voz (Inteligência Artificial)", font=ctk.CTkFont(size=16, weight="bold")).grid(row=1, column=0, pady=(10, 5), sticky="w")
         
@@ -580,18 +604,31 @@ class NarratorApp(ctk.CTk):
 
     def _check_gpu_availability(self):
         gpu_ok = PiperEngine.is_gpu_available()
+        is_frozen = getattr(sys, "frozen", False)
         if gpu_ok:
-            self._gpu_status_lbl.configure(text="GPU disponivel!", text_color="#4CAF50")
+            self._gpu_status_lbl.configure(text="GPU disponível (CUDA)!", text_color="#4CAF50")
             self._gpu_checkbox.grid()
             self._cuda_link_btn.grid()
-            self._btn_install_gpu.configure(state="disabled")
-            self._btn_uninstall_gpu.configure(state="normal")
+            if is_frozen:
+                self._btn_install_gpu.pack_forget()
+                self._btn_uninstall_gpu.pack_forget()
+            else:
+                self._btn_install_gpu.configure(state="disabled")
+                self._btn_uninstall_gpu.configure(state="normal")
         else:
-            self._gpu_status_lbl.configure(text="Nao instalado (CPU apenas)", text_color="orange")
-            self._gpu_checkbox.grid_remove()
-            self._cuda_link_btn.grid_remove()
-            self._btn_install_gpu.configure(state="normal")
-            self._btn_uninstall_gpu.configure(state="disabled")
+            if is_frozen:
+                self._gpu_status_lbl.configure(text="Modo CPU (Otimizado)", text_color="gray")
+                self._gpu_checkbox.grid_remove()
+                self._cuda_link_btn.grid()
+                self._btn_install_gpu.pack_forget()
+                self._btn_uninstall_gpu.pack_forget()
+            else:
+                self._gpu_status_lbl.configure(text="Não instalado (CPU apenas)", text_color="orange")
+                self._gpu_checkbox.grid_remove()
+                self._cuda_link_btn.grid_remove()
+                self._btn_install_gpu.configure(state="normal")
+                self._btn_uninstall_gpu.configure(state="disabled")
+
 
     def _on_install_gpu(self):
         self._btn_install_gpu.configure(state="disabled")
