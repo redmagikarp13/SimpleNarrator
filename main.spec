@@ -15,7 +15,7 @@ ffmpeg_bin = shutil.which('ffmpeg')
 if ffmpeg_bin and os.path.isfile(ffmpeg_bin):
     binaries.append((ffmpeg_bin, '.'))
 
-for pkg in ['piper', 'piper_phonemize', 'onnxruntime']:
+for pkg in ['piper', 'piper_phonemize', 'onnxruntime', 'nvidia.cudnn', 'nvidia.cublas', 'nvidia.cuda_nvrtc']:
     try:
         datas.extend(collect_data_files(pkg))
     except Exception:
@@ -48,6 +48,10 @@ hidden_imports = [
     'onnxruntime',
     'requests',
     'pyttsx3',
+    'nvidia',
+    'nvidia.cudnn',
+    'nvidia.cublas',
+    'nvidia.cuda_nvrtc',
 ]
 
 a = Analysis(

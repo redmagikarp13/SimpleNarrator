@@ -3,6 +3,7 @@ Motor Piper TTS.
 Utiliza modelos ONNX para síntese de voz offline de alta qualidade.
 """
 import os
+import sys
 import uuid
 import tempfile
 import logging
@@ -15,26 +16,48 @@ logger = logging.getLogger(__name__)
 
 
 def _register_nvidia_dll_paths():
-    """Registra todos os diretórios de DLLs NVIDIA (cuDNN, cuBLAS, NVRTC) para o ONNX Runtime."""
+    """Registra todos os diretórios de DLLs NVIDIA (cuDNN, cuBLAS, NVRTC) para o ONNX Runtime.
+    
+    Funciona tanto em ambiente de desenvolvimento quanto no executável PyInstaller.
+    """
+    dirs_to_add = []
+    
+    # Caso 1: PyInstaller bundle — DLLs estão em sys._MEIPASS
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        # Procurar DLLs NVIDIA na raiz do bundle e em subpastas
+        for root, dirs, files in os.walk(meipass):
+            for f in files:
+                if f.startswith(("cudnn", "cublas")) and f.endswith(".dll"):
+                    if root not in dirs_to_add:
+                        dirs_to_add.append(root)
+                    break  # Só precisa encontrar um DLL por diretório
+    
+    # Caso 2: Ambiente Python normal — usar pacote nvidia
     try:
         import nvidia
         nvidia_root = nvidia.__path__[0]
-        dirs_to_add = []
         for pkg_name in os.listdir(nvidia_root):
             bin_dir = os.path.join(nvidia_root, pkg_name, "bin")
             if os.path.isdir(bin_dir):
                 dirs_to_add.append(bin_dir)
-        for path in dirs_to_add:
+    except (ImportError, Exception):
+        pass
+    
+    # Registrar todos os diretórios encontrados
+    for path in dirs_to_add:
+        try:
             os.add_dll_directory(path)
-        # Também adicionar ao PATH para garantir que dependências cruzadas sejam encontradas
-        if dirs_to_add:
-            current_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = os.pathsep.join(dirs_to_add + [current_path])
-            logger.info(f"DLLs NVIDIA registrados no PATH ({len(dirs_to_add)} diretórios): {[os.path.basename(os.path.dirname(d)) for d in dirs_to_add]}")
-    except ImportError:
-        logger.debug("Pacote nvidia não encontrado, usando DLLs do sistema.")
-    except Exception as e:
-        logger.debug(f"Erro ao registrar DLLs NVIDIA: {e}")
+        except Exception:
+            pass
+    
+    # Também adicionar ao PATH para garantir que dependências cruzadas sejam encontradas
+    if dirs_to_add:
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join(dirs_to_add + [current_path])
+        logger.info(f"DLLs NVIDIA registrados no PATH ({len(dirs_to_add)} diretórios)")
+    else:
+        logger.debug("Nenhuma DLL NVIDIA encontrada.")
 
 class PiperEngine(BaseEngine):
     """Motor de TTS baseado no Piper TTS (modelos ONNX)."""
