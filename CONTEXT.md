@@ -76,3 +76,32 @@ python main.py
 # Compilar executável
 pyinstaller main.spec
 ```
+
+## Requisitos para GPU (CUDA)
+
+Para usar aceleração por GPU no motor Piper TTS no Windows:
+
+1. **CUDA Toolkit** instalado (ex: 13.3) — [download NVIDIA](https://developer.nvidia.com/cuda-downloads)
+2. **onnxruntime-gpu** e **nvidia-cudnn-cu12** instalados via `requirements.txt`
+3. As DLLs da cuDNN/cuBLAS são registradas automaticamente pelo código em `_register_nvidia_dll_paths()`
+
+**Nota:** As dependências de GPU são condicionais por plataforma no `requirements.txt`:
+- Windows: `onnxruntime-gpu` + `nvidia-cudnn-cu12`
+- Linux/macOS: `onnxruntime` (CPU apenas)
+
+## Correções Recentes (v1.0.13)
+
+### Estabilidade na Síntese
+- **Tratamento de exceção no worker** — erros em chunks individuais não travam mais a aplicação
+- **Fallback automático CPU** — se a GPU falhar, o motor recarrega a voz em CPU automaticamente
+- **Thread safety** — lock (`threading.Lock`) protege acesso concorrente ao ONNX Runtime
+- **Fix de file handle** — WAV files agora usam `try/finally` para garantir fechamento
+
+### Suporte a GPU no Execável PyInstaller
+- **Coleta de DLLs NVIDIA** — `main.spec` agora coleta `nvidia.cudnn`, `nvidia.cublas`, `nvidia.cuda_nvrtc`
+- **Hidden imports** — pacotes `nvidia.*` adicionados para detecção pelo PyInstaller
+- **Registro multi-ambiente** — `_register_nvidia_dll_paths()` funciona tanto em desenvolvimento quanto no bundle PyInstaller (via `sys._MEIPASS`)
+
+### Build Multiplataforma
+- **Dependências condicionais** — `requirements.txt` usa marcadores `sys_platform` para evitar erros no CI Ubuntu/macOS
+- **Workflow GitHub Actions** — release automática via tag `v*` (ex: `v1.0.13`)
