@@ -264,3 +264,71 @@ class PiperEngine(BaseEngine):
     @property
     def engine_name(self) -> str:
         return "IA (Piper TTS)"
+
+    # ─────────────────────────────────────────────
+    #  GERENCIAMENTO DE GPU (Instalacao sob demanda)
+    # ─────────────────────────────────────────────
+
+    @staticmethod
+    def is_gpu_available() -> bool:
+        """Verifica se as bibliotecas GPU estao instaladas."""
+        try:
+            import onnxruntime
+            providers = onnxruntime.get_available_providers()
+            return "CUDAExecutionProvider" in providers
+        except Exception:
+            return False
+
+    @staticmethod
+    def install_gpu_support(progress_callback=None) -> bool:
+        """Instala onnxruntime-gpu e nvidia-cudnn-cu12 via pip."""
+        import subprocess
+        packages = [
+            ("onnxruntime-gpu>=1.28.0", "Instalando ONNX Runtime GPU..."),
+            ("nvidia-cudnn-cu12>=9.0.0", "Instalando cuDNN (pode demorar)..."),
+        ]
+        for i, (pkg, msg) in enumerate(packages):
+            if progress_callback:
+                progress_callback(i / len(packages), msg)
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", pkg, "--quiet"],
+                    capture_output=True, text=True, timeout=600
+                )
+                if result.returncode != 0:
+                    logger.error(f"Erro ao instalar {pkg}: {result.stderr}")
+                    return False
+            except Exception as e:
+                logger.error(f"Excecao ao instalar {pkg}: {e}")
+                return False
+        if progress_callback:
+            progress_callback(1.0, "Instalacao concluida!")
+        logger.info("Suporte GPU instalado com sucesso.")
+        return True
+
+    @staticmethod
+    def uninstall_gpu_support() -> bool:
+        """Remove bibliotecas GPU e reverte para onnxruntime (CPU)."""
+        import subprocess
+        packages_to_remove = ["onnxruntime-gpu", "nvidia-cudnn-cu12", "nvidia-cublas-cu12", "nvidia-cuda-nvrtc-cu12"]
+        for pkg in packages_to_remove:
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "uninstall", "-y", pkg],
+                    capture_output=True, timeout=120
+                )
+            except Exception as e:
+                logger.debug(f"Erro ao desinstalar {pkg}: {e}")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "onnxruntime>=1.28.0", "--quiet"],
+                capture_output=True, text=True, timeout=300
+            )
+            if result.returncode != 0:
+                logger.error(f"Erro ao reinstalar onnxruntime CPU: {result.stderr}")
+                return False
+        except Exception as e:
+            logger.error(f"Excecao ao reinstalar onnxruntime CPU: {e}")
+            return False
+        logger.info("Suporte GPU removido. Usando CPU agora.")
+        return True

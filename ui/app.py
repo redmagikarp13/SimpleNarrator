@@ -107,6 +107,7 @@ class NarratorApp(ctk.CTk):
             sidebar, text="Aceleração GPU (CUDA)", variable=self._gpu_var, command=self._on_gpu_toggle, font=ctk.CTkFont(size=11)
         )
         self._gpu_checkbox.grid(row=3, column=0, padx=15, pady=(0, 2), sticky="w")
+        self._gpu_checkbox.grid_remove()  # Oculto por padrao
 
         # Link para baixar drivers CUDA da NVIDIA
         import webbrowser
@@ -121,6 +122,7 @@ class NarratorApp(ctk.CTk):
             height=20
         )
         self._cuda_link_btn.grid(row=4, column=0, padx=12, pady=(0, 10), sticky="w")
+        self._cuda_link_btn.grid_remove()  # Oculto por padrao
 
         ctk.CTkLabel(sidebar, text="Voz:").grid(row=5, column=0, padx=15, pady=(5, 2), sticky="w")
         self._voice_var = ctk.StringVar(value="—")
@@ -237,6 +239,25 @@ class NarratorApp(ctk.CTk):
         # Scrollable frame para listar
         self._models_frame = ctk.CTkScrollableFrame(self.tab_modelos)
         self._models_frame.grid(row=3, column=0, sticky="nsew", pady=5)
+
+        # -- Secao: Gerenciamento GPU --
+        gpu_frame = ctk.CTkFrame(self.tab_modelos, fg_color="transparent")
+        gpu_frame.grid(row=4, column=0, sticky="ew", pady=(10, 5))
+        ctk.CTkLabel(gpu_frame, text="Aceleracao GPU (NVIDIA CUDA)", font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=5)
+        self._gpu_status_lbl = ctk.CTkLabel(gpu_frame, text="Verificando...", text_color="gray", font=ctk.CTkFont(size=11))
+        self._gpu_status_lbl.pack(side="left", padx=10)
+
+        gpu_btn_frame = ctk.CTkFrame(self.tab_modelos, fg_color="transparent")
+        gpu_btn_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        self._btn_install_gpu = ctk.CTkButton(gpu_btn_frame, text="Instalar Suporte GPU", command=self._on_install_gpu, fg_color="#4CAF50", hover_color="#388E3C")
+        self._btn_install_gpu.pack(side="left", padx=5)
+        self._btn_uninstall_gpu = ctk.CTkButton(gpu_btn_frame, text="Remover Suporte GPU", command=self._on_uninstall_gpu, fg_color="#D32F2F", hover_color="#B71C1C", state="disabled")
+        self._btn_uninstall_gpu.pack(side="left", padx=5)
+        self._gpu_progress_lbl = ctk.CTkLabel(gpu_btn_frame, text="", text_color="gray", font=ctk.CTkFont(size=10))
+        self._gpu_progress_lbl.pack(side="left", padx=10)
+
+        # Verificar GPU apos construir UI
+        self.after(1000, self._check_gpu_availability)
 
     def _load_models_list(self):
         self._btn_refresh_models.configure(state="disabled")
@@ -556,6 +577,52 @@ class NarratorApp(ctk.CTk):
     def _reset_ui(self):
         self._btn_generate.configure(state="normal")
         self._btn_cancel.configure(state="disabled")
+
+    def _check_gpu_availability(self):
+        gpu_ok = PiperEngine.is_gpu_available()
+        if gpu_ok:
+            self._gpu_status_lbl.configure(text="GPU disponivel!", text_color="#4CAF50")
+            self._gpu_checkbox.grid()
+            self._cuda_link_btn.grid()
+            self._btn_install_gpu.configure(state="disabled")
+            self._btn_uninstall_gpu.configure(state="normal")
+        else:
+            self._gpu_status_lbl.configure(text="Nao instalado (CPU apenas)", text_color="orange")
+            self._gpu_checkbox.grid_remove()
+            self._cuda_link_btn.grid_remove()
+            self._btn_install_gpu.configure(state="normal")
+            self._btn_uninstall_gpu.configure(state="disabled")
+
+    def _on_install_gpu(self):
+        self._btn_install_gpu.configure(state="disabled")
+        self._gpu_progress_lbl.configure(text="Instalando... (pode demorar)", text_color="orange")
+        def task():
+            def progress(pct, msg):
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text=f"{msg} ({int(pct*100)}%)"))
+            success = PiperEngine.install_gpu_support(progress_callback=progress)
+            self.after(0, lambda: self._check_gpu_availability())
+            if success:
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Instalado! Reinicie o app.", text_color="#4CAF50"))
+                self.after(0, lambda: messagebox.showinfo("GPU", "Suporte GPU instalado! Reinicie o app."))
+            else:
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Falha.", text_color="red"))
+                self.after(0, lambda: self._btn_install_gpu.configure(state="normal"))
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_uninstall_gpu(self):
+        if not messagebox.askyesno("Remover GPU", "Remover suporte GPU? O app voltara a usar CPU."):
+            return
+        self._btn_uninstall_gpu.configure(state="disabled")
+        self._gpu_progress_lbl.configure(text="Removendo...", text_color="orange")
+        def task():
+            success = PiperEngine.uninstall_gpu_support()
+            self.after(0, lambda: self._check_gpu_availability())
+            if success:
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Removido! Reinicie o app.", text_color="#4CAF50"))
+            else:
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Erro.", text_color="red"))
+                self.after(0, lambda: self._btn_uninstall_gpu.configure(state="normal"))
+        threading.Thread(target=task, daemon=True).start()
 
     def _on_close(self):
         self._is_processing = False
