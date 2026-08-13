@@ -6,11 +6,35 @@ import os
 import uuid
 import tempfile
 import logging
+import threading
 from typing import Optional, List
 
 from engines.base_engine import BaseEngine, EngineState, VoiceInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _register_nvidia_dll_paths():
+    """Registra todos os diretórios de DLLs NVIDIA (cuDNN, cuBLAS, NVRTC) para o ONNX Runtime."""
+    try:
+        import nvidia
+        nvidia_root = nvidia.__path__[0]
+        dirs_to_add = []
+        for pkg_name in os.listdir(nvidia_root):
+            bin_dir = os.path.join(nvidia_root, pkg_name, "bin")
+            if os.path.isdir(bin_dir):
+                dirs_to_add.append(bin_dir)
+        for path in dirs_to_add:
+            os.add_dll_directory(path)
+        # Também adicionar ao PATH para garantir que dependências cruzadas sejam encontradas
+        if dirs_to_add:
+            current_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = os.pathsep.join(dirs_to_add + [current_path])
+            logger.info(f"DLLs NVIDIA registrados no PATH ({len(dirs_to_add)} diretórios): {[os.path.basename(os.path.dirname(d)) for d in dirs_to_add]}")
+    except ImportError:
+        logger.debug("Pacote nvidia não encontrado, usando DLLs do sistema.")
+    except Exception as e:
+        logger.debug(f"Erro ao registrar DLLs NVIDIA: {e}")
 
 class PiperEngine(BaseEngine):
     """Motor de TTS baseado no Piper TTS (modelos ONNX)."""
@@ -22,6 +46,7 @@ class PiperEngine(BaseEngine):
         self._voice = None
         self._rate_scale = 1.0  # Piper usa length_scale (maior = mais lento)
         self.use_cuda = False
+        self._synth_lock = threading.Lock()
 
     def set_use_cuda(self, use_cuda: bool) -> None:
         """Define se deve usar aceleração por GPU (CUDA)."""
@@ -72,6 +97,8 @@ class PiperEngine(BaseEngine):
 
         try:
             from piper.voice import PiperVoice
+            if self.use_cuda:
+                _register_nvidia_dll_paths()
             self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=self.use_cuda)
             self._voice_id = voice_id
             logger.info(f"Voz Piper carregada (use_cuda={self.use_cuda}): {voice_id}")
@@ -122,26 +149,71 @@ class PiperEngine(BaseEngine):
         try:
             import wave
             wav_file = None
-            for chunk in self._voice.synthesize(text, syn_config=syn_config):
-                if wav_file is None:
-                    wav_file = wave.open(temp_file, "wb")
-                    wav_file.setnchannels(chunk.sample_channels)
-                    wav_file.setsampwidth(chunk.sample_width)
-                    wav_file.setframerate(chunk.sample_rate)
-                wav_file.writeframes(chunk.audio_int16_bytes)
+            with self._synth_lock:
+                try:
+                    for chunk in self._voice.synthesize(text, syn_config=syn_config):
+                        if wav_file is None:
+                            wav_file = wave.open(temp_file, "wb")
+                            wav_file.setnchannels(chunk.sample_channels)
+                            wav_file.setsampwidth(chunk.sample_width)
+                            wav_file.setframerate(chunk.sample_rate)
+                        wav_file.writeframes(chunk.audio_int16_bytes)
+                finally:
+                    if wav_file:
+                        wav_file.close()
 
-            if wav_file:
-                wav_file.close()
+            if wav_file and os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
                 self._state = EngineState.IDLE
                 return temp_file
             else:
                 logger.warning("Nenhum chunk de áudio gerado pelo Piper.")
                 self._state = EngineState.IDLE
+                # Limpar arquivo vazio se existir
+                try:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except OSError:
+                    pass
                 return None
         except Exception as e:
             logger.error(f"Erro ao sintetizar via Piper: {e}", exc_info=True)
+            # Se estava usando CUDA e falhou, tentar fallback para CPU
+            if self.use_cuda and self._voice_id:
+                logger.info("Tentando fallback de síntese para CPU...")
+                try:
+                    self._reload_voice_cpu_fallback()
+                    # Tentar síntese novamente em CPU
+                    wav_file = None
+                    with self._synth_lock:
+                        try:
+                            for chunk in self._voice.synthesize(text, syn_config=syn_config):
+                                if wav_file is None:
+                                    wav_file = wave.open(temp_file, "wb")
+                                    wav_file.setnchannels(chunk.sample_channels)
+                                    wav_file.setsampwidth(chunk.sample_width)
+                                    wav_file.setframerate(chunk.sample_rate)
+                                wav_file.writeframes(chunk.audio_int16_bytes)
+                        finally:
+                            if wav_file:
+                                wav_file.close()
+                    if wav_file and os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+                        logger.info("Fallback para CPU bem-sucedido.")
+                        self._state = EngineState.IDLE
+                        return temp_file
+                except Exception as e2:
+                    logger.error(f"Fallback para CPU também falhou: {e2}", exc_info=True)
             self._state = EngineState.ERROR
             return None
+
+    def _reload_voice_cpu_fallback(self):
+        """Recarrega a voz atual em modo CPU como fallback."""
+        if not self._voice_id:
+            return
+        from piper.voice import PiperVoice
+        onnx_path = os.path.join(self.models_dir, f"{self._voice_id}.onnx")
+        config_path = os.path.join(self.models_dir, f"{self._voice_id}.onnx.json")
+        self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
+        logger.info(f"Voz recarregada em CPU (fallback): {self._voice_id}")
 
     def synthesize_stream(self, text: str):
         """Streaming de áudio - retorna iterator de bytes raw PCM."""

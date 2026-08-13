@@ -491,39 +491,53 @@ class NarratorApp(ctk.CTk):
         audio_files = []
         total = len(chunks)
 
-        for chunk in chunks:
-            if not self._is_processing:
+        try:
+            for chunk in chunks:
+                if not self._is_processing:
+                    if on_finish: self.after(0, on_finish)
+                    return
+
+                if plabel:
+                    self.after(0, lambda c=chunk: plabel.configure(text=f"Sintetizando bloco {c.index + 1} de {total}..."))
+                
+                tmp_wav = os.path.join(tempfile.gettempdir(), f"sn_chunk_{chunk.index:04d}.wav")
+
+                try:
+                    audio_path = self._active_engine.synthesize(chunk.text)
+                except Exception as e:
+                    logger.error(f"Erro na síntese do bloco {chunk.index + 1}: {e}", exc_info=True)
+                    if plabel:
+                        self.after(0, lambda t=chunk.text[:40]: plabel.configure(text=f"Erro no bloco: '{t}...'", text_color="red"))
+                    continue
+                
+                if audio_path and os.path.exists(audio_path):
+                    import shutil
+                    shutil.copy2(audio_path, tmp_wav)
+                    audio_files.append(tmp_wav)
+                else:
+                    logger.warning(f"Síntese retornou vazio para o bloco {chunk.index + 1}.")
+
+                if pbar: self.after(0, lambda p=(chunk.index + 1)/total: pbar.set(p))
+
+            if not self._is_processing or not audio_files:
+                if plabel:
+                    self.after(0, lambda: plabel.configure(text="Falha na síntese. Instale o modelo na aba Modelos.", text_color="red"))
+                self.after(0, lambda: messagebox.showerror("Erro de Síntese", "Nenhum áudio foi gerado.\n\nVerifique se o modelo de voz do Piper está baixado na aba 'Modelos Piper' ou se os drivers CUDA estão configurados corretamente."))
                 if on_finish: self.after(0, on_finish)
                 return
 
-            if plabel:
-                self.after(0, lambda c=chunk: plabel.configure(text=f"Sintetizando bloco {c.index + 1} de {total}..."))
-            
-            tmp_wav = os.path.join(tempfile.gettempdir(), f"sn_chunk_{chunk.index:04d}.wav")
-            audio_path = self._active_engine.synthesize(chunk.text)
-            
-            if audio_path and os.path.exists(audio_path):
-                import shutil
-                shutil.copy2(audio_path, tmp_wav)
-                audio_files.append(tmp_wav)
+            if plabel: self.after(0, lambda: plabel.configure(text="Mesclando MP3...", text_color="gray"))
 
-            if pbar: self.after(0, lambda p=(chunk.index + 1)/total: pbar.set(p))
-
-        if not self._is_processing or not audio_files:
-            if plabel:
-                self.after(0, lambda: plabel.configure(text="Falha na síntese. Instale o modelo na aba Modelos.", text_color="red"))
-            self.after(0, lambda: messagebox.showerror("Erro de Síntese", "Nenhum áudio foi gerado.\n\nVerifique se o modelo de voz do Piper está baixado na aba 'Modelos Piper' ou se os drivers CUDA estão configurados corretamente."))
-            if on_finish: self.after(0, on_finish)
-            return
-
-        if plabel: self.after(0, lambda: plabel.configure(text="Mesclando MP3...", text_color="gray"))
-
-        try:
-            merge_and_export(audio_files, output_path, format=fmt)
-            if plabel: self.after(0, lambda: plabel.configure(text=f"Salvo: {Path(output_path).name}", text_color="#4CAF50"))
+            try:
+                merge_and_export(audio_files, output_path, format=fmt)
+                if plabel: self.after(0, lambda: plabel.configure(text=f"Salvo: {Path(output_path).name}", text_color="#4CAF50"))
+            except Exception as e:
+                logger.error(f"Erro ao exportar: {e}", exc_info=True)
+                if plabel: self.after(0, lambda: plabel.configure(text="Erro ao exportar.", text_color="red"))
         except Exception as e:
-            logger.error(f"Erro ao exportar: {e}")
-            if plabel: self.after(0, lambda: plabel.configure(text="Erro ao exportar.", text_color="red"))
+            logger.error(f"Erro inesperado no worker de síntese: {e}", exc_info=True)
+            if plabel:
+                self.after(0, lambda: plabel.configure(text=f"Erro inesperado: {e}", text_color="red"))
         finally:
             for f in audio_files:
                 try: os.remove(f)
