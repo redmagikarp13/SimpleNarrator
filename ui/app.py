@@ -388,7 +388,8 @@ class NarratorApp(ctk.CTk):
                 self._voice_menu.configure(values=names)
                 self._voice_var.set(names[0])
                 self._active_engine.set_voice(self._voices[0].id)
-                self._progress_label.configure(text=f"Motor: {self._active_engine.engine_name} — {len(self._voices)} voz(es)", text_color="gray")
+                device_info = f" [{self._active_engine.active_device}]" if hasattr(self._active_engine, "active_device") else ""
+                self._progress_label.configure(text=f"Motor: {self._active_engine.engine_name}{device_info} — {len(self._voices)} voz(es)", text_color="gray")
             else:
                 self._voice_menu.configure(values=["— Sem vozes baixadas —"])
                 self._voice_var.set("— Sem vozes baixadas —")
@@ -424,7 +425,16 @@ class NarratorApp(ctk.CTk):
         use_cuda = self._gpu_var.get()
         piper: PiperEngine = self._engines["piper"]
         piper.set_use_cuda(use_cuda)
-        logger.info(f"Aceleração GPU alterada para: {use_cuda}")
+        device = piper.active_device
+        if use_cuda and device == "GPU (CUDA)":
+            self._progress_label.configure(text="Aceleração GPU (CUDA) ativada com sucesso!", text_color="#4CAF50")
+        elif use_cuda and device != "GPU (CUDA)":
+            err_msg = getattr(piper, "_last_cuda_error", "Falha ao inicializar")
+            self._progress_label.configure(text=f"Aviso: GPU indisponível ({err_msg}). Usando CPU.", text_color="orange")
+        else:
+            self._progress_label.configure(text="Processamento em CPU ativado.", text_color="gray")
+        logger.info(f"Aceleração GPU alterada para: {use_cuda} (Dispositivo ativo: {device})")
+        self._refresh_voices()
 
     def _on_voice_change(self, choice: str):
         for v in self._voices:
@@ -552,13 +562,14 @@ class NarratorApp(ctk.CTk):
         import uuid
         audio_files = []
         total = len(chunks)
+        device_str = f" [{self._active_engine.active_device}]" if hasattr(self._active_engine, "active_device") else ""
         
         try:
             for chunk in chunks:
                 if not self._is_processing:
                     break
                 if plabel: 
-                    self.after(0, lambda idx=chunk.index+1: plabel.configure(text=f"Sintetizando {idx}/{total}...", text_color="gray"))
+                    self.after(0, lambda idx=chunk.index+1, dev=device_str: plabel.configure(text=f"Sintetizando {idx}/{total}{dev}...", text_color="gray"))
 
                 audio_path = self._active_engine.synthesize(chunk.text)
                 if audio_path and os.path.exists(audio_path):

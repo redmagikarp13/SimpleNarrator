@@ -63,6 +63,9 @@ logging.basicConfig(
     ],
 )
 
+from engines.piper_engine import _register_nvidia_dll_paths
+_register_nvidia_dll_paths()
+
 from ui.app import NarratorApp
 
 

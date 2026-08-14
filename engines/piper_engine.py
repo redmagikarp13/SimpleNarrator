@@ -129,7 +129,8 @@ class PiperEngine(BaseEngine):
             if self._voice_id:
                 curr_voice = self._voice_id
                 self._voice = None
-                self._load_voice(curr_voice)
+                self._voice_id = None
+                self.set_voice(curr_voice)
 
     def initialize(self) -> None:
         """Piper não precisa de inicialização global, apenas carregar o modelo."""
@@ -180,27 +181,37 @@ class PiperEngine(BaseEngine):
             self._voice = None
             return
 
+        _register_nvidia_dll_paths()
+
+        if self.use_cuda:
+            try:
+                from piper.voice import PiperVoice
+                self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=True)
+                self._voice_id = voice_id
+                providers = self._voice.session.get_providers() if hasattr(self._voice, "session") else []
+                logger.info(f"Voz Piper '{voice_id}' carregada com CUDA: True. Providers: {providers}")
+                return
+            except Exception as e:
+                logger.warning(f"Falha ao carregar modelo '{voice_id}' com CUDA: {e}. Recorrendo a CPU...")
+                self._last_cuda_error = str(e)
+
         try:
             from piper.voice import PiperVoice
-            if self.use_cuda:
-                _register_nvidia_dll_paths()
-            self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=self.use_cuda)
+            self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
             self._voice_id = voice_id
-            logger.info(f"Voz Piper carregada (use_cuda={self.use_cuda}): {voice_id}")
+            logger.info(f"Voz Piper '{voice_id}' carregada em modo CPU.")
         except Exception as e:
-            logger.error(f"Erro ao carregar voz {voice_id} (use_cuda={self.use_cuda}): {e}")
-            if self.use_cuda:
-                logger.info("Tentando fallback para CPU...")
-                try:
-                    from piper.voice import PiperVoice
-                    self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
-                    self._voice_id = voice_id
-                    logger.info(f"Voz Piper carregada em fallback CPU: {voice_id}")
-                except Exception as e2:
-                    logger.error(f"Erro no fallback CPU: {e2}")
-                    self._voice = None
-            else:
-                self._voice = None
+            logger.error(f"Erro ao carregar modelo Piper em CPU: {e}")
+            self._voice = None
+
+    @property
+    def active_device(self) -> str:
+        """Retorna 'GPU (CUDA)' se a sessão ativa está na GPU, senão 'CPU'."""
+        if self._voice and hasattr(self._voice, "session"):
+            providers = self._voice.session.get_providers()
+            if "CUDAExecutionProvider" in providers:
+                return "GPU (CUDA)"
+        return "CPU"
 
     def set_rate(self, rate: float) -> None:
         if rate <= 0:
