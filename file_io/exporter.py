@@ -95,8 +95,12 @@ def export_mp3(wav_path: str, output_path: str) -> str:
     logger.info(f"Utilizando FFmpeg em: {ffmpeg_bin}")
 
     creationflags = 0
+    startupinfo = None
     if sys.platform == "win32":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
 
     try:
         result = subprocess.run(
@@ -110,6 +114,8 @@ def export_mp3(wav_path: str, output_path: str) -> str:
             capture_output=True,
             text=True,
             creationflags=creationflags,
+            startupinfo=startupinfo,
+            stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
         raise RuntimeError(f"FFmpeg não encontrado em '{ffmpeg_bin}'. Verifique se o FFmpeg está instalado.")

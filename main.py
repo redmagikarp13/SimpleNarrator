@@ -75,4 +75,9 @@ def main():
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
+
+    # Evitar que execuções acidentais via linha de comando ou subprocessos abram a GUI
+    if len(sys.argv) > 1 and (sys.argv[1] in ("-m", "-c") or sys.argv[1].startswith("-")):
+        sys.exit(0)
+
     main()

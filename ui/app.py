@@ -274,14 +274,12 @@ class NarratorApp(ctk.CTk):
         gpu_btn_frame = ctk.CTkFrame(self.tab_modelos, fg_color="transparent")
         gpu_btn_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
         self._btn_install_gpu = ctk.CTkButton(gpu_btn_frame, text="Instalar Suporte GPU", command=self._on_install_gpu, fg_color="#4CAF50", hover_color="#388E3C")
-        self._btn_install_gpu.pack(side="left", padx=5)
         self._btn_uninstall_gpu = ctk.CTkButton(gpu_btn_frame, text="Remover Suporte GPU", command=self._on_uninstall_gpu, fg_color="#D32F2F", hover_color="#B71C1C", state="disabled")
-        self._btn_uninstall_gpu.pack(side="left", padx=5)
         self._gpu_progress_lbl = ctk.CTkLabel(gpu_btn_frame, text="", text_color="gray", font=ctk.CTkFont(size=10))
         self._gpu_progress_lbl.pack(side="left", padx=10)
 
-        # Verificar GPU apos construir UI
-        self.after(1000, self._check_gpu_availability)
+        # Verificar GPU logo apos construir UI
+        self.after(50, self._check_gpu_availability)
 
     def _load_models_list(self):
         self._btn_refresh_models.configure(state="disabled")
@@ -352,7 +350,7 @@ class NarratorApp(ctk.CTk):
         threading.Thread(target=task, daemon=True).start()
 
     def _on_delete_model(self, key: str, frame: ctk.CTkFrame):
-        if messagebox.askyesno("Confirmar Exclusão", f"Deseja realmente excluir o modelo '{key}'?"):
+        if messagebox.askyesno("Confirmar Exclusão", f"Deseja realmente excluir o modelo '{key}'?", parent=self):
             if self.downloader.delete_voice(key):
                 self._engines["piper"].initialize()
                 if self._engine_var.get() == "piper":
@@ -436,7 +434,7 @@ class NarratorApp(ctk.CTk):
     # ─────────────────────────────────────────────
     def _on_generate(self):
         if not self._active_engine or not self._voices:
-            messagebox.showerror("Erro", "Nenhum motor ou voz disponível.")
+            messagebox.showerror("Erro", "Nenhum motor ou voz disponível.", parent=self)
             return
 
         text = self._text_box.get("1.0", "end").strip()
@@ -484,13 +482,13 @@ class NarratorApp(ctk.CTk):
 
     def _on_process_batch(self):
         if not self._active_engine or not self._voices:
-            messagebox.showerror("Erro", "Selecione uma voz na aba Narrador primeiro.")
+            messagebox.showerror("Erro", "Selecione uma voz na aba Narrador primeiro.", parent=self)
             return
         if not self._batch_files:
-            messagebox.showwarning("Aviso", "Adicione arquivos primeiro.")
+            messagebox.showwarning("Aviso", "Adicione arquivos primeiro.", parent=self)
             return
         if not self._batch_output_dir:
-            messagebox.showwarning("Aviso", "Selecione a pasta de saída.")
+            messagebox.showwarning("Aviso", "Selecione a pasta de saída.", parent=self)
             return
 
         self._is_processing = True
@@ -567,7 +565,7 @@ class NarratorApp(ctk.CTk):
             if not self._is_processing or not audio_files:
                 if plabel:
                     self.after(0, lambda: plabel.configure(text="Falha na síntese. Instale o modelo na aba Modelos.", text_color="red"))
-                self.after(0, lambda: messagebox.showerror("Erro de Síntese", "Nenhum áudio foi gerado.\n\nVerifique se o modelo de voz do Piper está baixado na aba 'Modelos Piper' ou se os drivers CUDA estão configurados corretamente."))
+                self.after(0, lambda: messagebox.showerror("Erro de Síntese", "Nenhum áudio foi gerado.\n\nVerifique se o modelo de voz do Piper está baixado na aba 'Modelos Piper' ou se os drivers CUDA estão configurados corretamente.", parent=self))
                 if on_finish: self.after(0, on_finish)
                 return
 
@@ -613,7 +611,9 @@ class NarratorApp(ctk.CTk):
                 self._btn_install_gpu.pack_forget()
                 self._btn_uninstall_gpu.pack_forget()
             else:
+                self._btn_install_gpu.pack(side="left", padx=5)
                 self._btn_install_gpu.configure(state="disabled")
+                self._btn_uninstall_gpu.pack(side="left", padx=5)
                 self._btn_uninstall_gpu.configure(state="normal")
         else:
             if is_frozen:
@@ -626,28 +626,29 @@ class NarratorApp(ctk.CTk):
                 self._gpu_status_lbl.configure(text="Não instalado (CPU apenas)", text_color="orange")
                 self._gpu_checkbox.grid_remove()
                 self._cuda_link_btn.grid_remove()
+                self._btn_install_gpu.pack(side="left", padx=5)
                 self._btn_install_gpu.configure(state="normal")
+                self._btn_uninstall_gpu.pack(side="left", padx=5)
                 self._btn_uninstall_gpu.configure(state="disabled")
 
 
     def _on_install_gpu(self):
         self._btn_install_gpu.configure(state="disabled")
-        self._gpu_progress_lbl.configure(text="Instalando... (pode demorar)", text_color="orange")
+        self._gpu_progress_lbl.configure(text="Instalando... (pode demorar alguns minutos)", text_color="orange")
         def task():
             def progress(pct, msg):
                 self.after(0, lambda: self._gpu_progress_lbl.configure(text=f"{msg} ({int(pct*100)}%)"))
             success = PiperEngine.install_gpu_support(progress_callback=progress)
             self.after(0, lambda: self._check_gpu_availability())
             if success:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Instalado! Reinicie o app.", text_color="#4CAF50"))
-                self.after(0, lambda: messagebox.showinfo("GPU", "Suporte GPU instalado! Reinicie o app."))
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Suporte GPU instalado com sucesso! Reinicie o app.", text_color="#4CAF50"))
             else:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Falha.", text_color="red"))
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Falha na instalação.", text_color="red"))
                 self.after(0, lambda: self._btn_install_gpu.configure(state="normal"))
         threading.Thread(target=task, daemon=True).start()
 
     def _on_uninstall_gpu(self):
-        if not messagebox.askyesno("Remover GPU", "Remover suporte GPU? O app voltara a usar CPU."):
+        if not messagebox.askyesno("Remover GPU", "Remover suporte GPU? O app voltará a usar CPU.", parent=self):
             return
         self._btn_uninstall_gpu.configure(state="disabled")
         self._gpu_progress_lbl.configure(text="Removendo...", text_color="orange")
@@ -655,9 +656,9 @@ class NarratorApp(ctk.CTk):
             success = PiperEngine.uninstall_gpu_support()
             self.after(0, lambda: self._check_gpu_availability())
             if success:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Removido! Reinicie o app.", text_color="#4CAF50"))
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Suporte GPU removido! Reinicie o app.", text_color="#4CAF50"))
             else:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Erro.", text_color="red"))
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Erro ao remover.", text_color="red"))
                 self.after(0, lambda: self._btn_uninstall_gpu.configure(state="normal"))
         threading.Thread(target=task, daemon=True).start()
 

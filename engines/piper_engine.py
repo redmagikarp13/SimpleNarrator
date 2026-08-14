@@ -306,13 +306,15 @@ class PiperEngine(BaseEngine):
             return None
         exe = sys.executable
         if exe and os.path.isfile(exe):
-            if "pythonw" in os.path.basename(exe).lower():
-                candidate = exe.lower().replace("pythonw.exe", "python.exe").replace("pythonw", "python")
-                if os.path.isfile(candidate):
-                    return candidate
-            return exe
+            base = os.path.basename(exe).lower()
+            if "python" in base:
+                if "pythonw" in base:
+                    candidate = exe.lower().replace("pythonw.exe", "python.exe").replace("pythonw", "python")
+                    if os.path.isfile(candidate):
+                        return candidate
+                return exe
         import shutil
-        return shutil.which("python")
+        return shutil.which("python") or shutil.which("python3") or shutil.which("py")
 
     @classmethod
     def install_gpu_support(cls, progress_callback=None) -> bool:
@@ -330,8 +332,12 @@ class PiperEngine(BaseEngine):
 
         import subprocess
         creationflags = 0
+        startupinfo = None
         if sys.platform == "win32":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
 
         packages = [
             ("onnxruntime-gpu>=1.28.0", "Instalando ONNX Runtime GPU..."),
@@ -345,6 +351,8 @@ class PiperEngine(BaseEngine):
                     [python_bin, "-m", "pip", "install", pkg, "--quiet"],
                     capture_output=True, text=True, timeout=600,
                     creationflags=creationflags,
+                    startupinfo=startupinfo,
+                    stdin=subprocess.DEVNULL,
                 )
                 if result.returncode != 0:
                     logger.error(f"Erro ao instalar {pkg}: {result.stderr}")
@@ -370,8 +378,12 @@ class PiperEngine(BaseEngine):
 
         import subprocess
         creationflags = 0
+        startupinfo = None
         if sys.platform == "win32":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
 
         packages_to_remove = ["onnxruntime-gpu", "nvidia-cudnn-cu12", "nvidia-cublas-cu12", "nvidia-cuda-nvrtc-cu12"]
         for pkg in packages_to_remove:
@@ -380,6 +392,8 @@ class PiperEngine(BaseEngine):
                     [python_bin, "-m", "pip", "uninstall", "-y", pkg],
                     capture_output=True, timeout=120,
                     creationflags=creationflags,
+                    startupinfo=startupinfo,
+                    stdin=subprocess.DEVNULL,
                 )
             except Exception as e:
                 logger.debug(f"Erro ao desinstalar {pkg}: {e}")
@@ -388,6 +402,8 @@ class PiperEngine(BaseEngine):
                 [python_bin, "-m", "pip", "install", "onnxruntime>=1.28.0", "--quiet"],
                 capture_output=True, text=True, timeout=300,
                 creationflags=creationflags,
+                startupinfo=startupinfo,
+                stdin=subprocess.DEVNULL,
             )
             if result.returncode != 0:
                 logger.error(f"Erro ao reinstalar onnxruntime CPU: {result.stderr}")
