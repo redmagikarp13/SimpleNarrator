@@ -383,13 +383,19 @@ class NarratorApp(ctk.CTk):
         if not self._active_engine: return
         try:
             self._voices = self._active_engine.get_available_voices()
-            names = [v.name for v in self._voices] if self._voices else ["Nenhuma voz"]
-            self._voice_menu.configure(values=names)
-            if names and names[0] != "Nenhuma voz":
+            names = [v.name for v in self._voices] if self._voices else []
+            if names:
+                self._voice_menu.configure(values=names)
                 self._voice_var.set(names[0])
                 self._active_engine.set_voice(self._voices[0].id)
+                self._progress_label.configure(text=f"Motor: {self._active_engine.engine_name} — {len(self._voices)} voz(es)", text_color="gray")
             else:
-                self._voice_var.set("—")
+                self._voice_menu.configure(values=["— Sem vozes baixadas —"])
+                self._voice_var.set("— Sem vozes baixadas —")
+                if "Piper" in self._active_engine.engine_name or "IA" in self._active_engine.engine_name:
+                    self._progress_label.configure(text="Sem vozes Piper baixadas. Vá na aba 'Modelos Piper'.", text_color="orange")
+                else:
+                    self._progress_label.configure(text=f"Nenhuma voz encontrada para {self._active_engine.engine_name}.", text_color="orange")
         except Exception as e:
             logger.error(f"Erro ao carregar vozes: {e}")
             self._voices = []

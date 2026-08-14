@@ -132,78 +132,75 @@ class PiperEngine(BaseEngine):
                 self._load_voice(curr_voice)
 
     def initialize(self) -> None:
-        pass
+        """Piper não precisa de inicialização global, apenas carregar o modelo."""
+        try:
+            logging.getLogger("piper").setLevel(logging.WARNING)
+            logging.getLogger("piper.voice").setLevel(logging.WARNING)
+            from piper.voice import PiperVoice
+            self._state = EngineState.IDLE
+        except ImportError:
+            logger.error("piper-tts não instalado.")
+            self._state = EngineState.ERROR
 
     def get_available_voices(self) -> list[VoiceInfo]:
-        from piper.download import get_voices
-        result = []
-        voices_data = self._get_local_voices_data()
-        for voice_key, voice_meta in voices_data.items():
-            lang = voice_meta.get("language", {}).get("code", "unknown")
-            quality = voice_meta.get("quality", "unknown")
-            name = f"{voice_key} ({quality})"
-            result.append(
-                VoiceInfo(
-                    id=voice_key,
-                    name=name,
-                    language=lang,
-                    gender=None,
-                    engine_type="piper",
-                )
-            )
-        return result
+        """Lista as vozes .onnx disponíveis na pasta models."""
+        if not os.path.exists(self.models_dir):
+            return []
 
-    def _get_local_voices_data(self) -> dict:
-        import json
-        json_path = os.path.join(self.models_dir, "voices.json")
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Erro ao ler voices.json local: {e}")
-        return {}
+        voices = []
+        try:
+            for file in os.listdir(self.models_dir):
+                if file.endswith(".onnx"):
+                    voice_id = file.replace(".onnx", "")
+                    json_path = os.path.join(self.models_dir, f"{voice_id}.onnx.json")
+                    if os.path.exists(json_path):
+                        voices.append(
+                            VoiceInfo(
+                                id=voice_id,
+                                name=f"Piper: {voice_id}",
+                                language="IA",
+                                gender=None,
+                                engine_type="piper",
+                            )
+                        )
+        except Exception as e:
+            logger.error(f"Erro ao listar vozes Piper: {e}")
+        return voices
 
     def set_voice(self, voice_id: str) -> None:
-        self._voice_id = voice_id
-        self._load_voice(voice_id)
+        """Carrega o modelo ONNX em memória (CPU ou GPU)."""
+        if self._voice_id == voice_id and self._voice is not None:
+            return
 
-    def _load_voice(self, voice_id: str) -> None:
-        from piper import PiperVoice
-        onnx_file = os.path.join(self.models_dir, f"{voice_id}.onnx")
-        config_file = os.path.join(self.models_dir, f"{voice_id}.onnx.json")
+        onnx_path = os.path.join(self.models_dir, f"{voice_id}.onnx")
+        config_path = os.path.join(self.models_dir, f"{voice_id}.onnx.json")
 
-        if not os.path.exists(onnx_file):
+        if not os.path.exists(onnx_path) or not os.path.exists(config_path):
+            logger.error(f"Arquivos da voz {voice_id} não encontrados.")
             self._voice = None
             return
 
-        _register_nvidia_dll_paths()
-
         try:
-            cfg = config_file if os.path.exists(config_file) else None
-            self._voice = PiperVoice.load(
-                onnx_file,
-                config_path=cfg,
-                use_cuda=self.use_cuda,
-            )
-            logger.info(f"Voz Piper '{voice_id}' carregada (CUDA: {self.use_cuda}).")
-        except Exception as e:
+            from piper.voice import PiperVoice
             if self.use_cuda:
-                logger.warning(f"Falha ao carregar modelo com CUDA ({e}). Tentando CPU...")
+                _register_nvidia_dll_paths()
+            self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=self.use_cuda)
+            self._voice_id = voice_id
+            logger.info(f"Voz Piper carregada (use_cuda={self.use_cuda}): {voice_id}")
+        except Exception as e:
+            logger.error(f"Erro ao carregar voz {voice_id} (use_cuda={self.use_cuda}): {e}")
+            if self.use_cuda:
+                logger.info("Tentando fallback para CPU...")
                 try:
-                    cfg = config_file if os.path.exists(config_file) else None
-                    self._voice = PiperVoice.load(
-                        onnx_file,
-                        config_path=cfg,
-                        use_cuda=False,
-                    )
-                    self.use_cuda = False
-                    logger.info(f"Voz Piper '{voice_id}' carregada em modo CPU após fallback.")
-                    return
-                except Exception as fallback_err:
-                    logger.error(f"Fallback para CPU também falhou: {fallback_err}")
-            logger.error(f"Erro ao carregar modelo Piper: {e}")
-            self._voice = None
+                    from piper.voice import PiperVoice
+                    self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
+                    self._voice_id = voice_id
+                    logger.info(f"Voz Piper carregada em fallback CPU: {voice_id}")
+                except Exception as e2:
+                    logger.error(f"Erro no fallback CPU: {e2}")
+                    self._voice = None
+            else:
+                self._voice = None
 
     def set_rate(self, rate: float) -> None:
         if rate <= 0:
@@ -214,50 +211,93 @@ class PiperEngine(BaseEngine):
         pass
 
     def synthesize(self, text: str) -> Optional[str]:
-        if not self._voice:
+        """Sintetiza texto e retorna o caminho do arquivo WAV."""
+        if self._voice is None:
             if self._voice_id:
-                self._load_voice(self._voice_id)
-            if not self._voice:
+                self.set_voice(self._voice_id)
+            if self._voice is None:
                 logger.error("Nenhuma voz Piper carregada.")
                 return None
 
         self._state = EngineState.SPEAKING
-        tmp_path = os.path.join(
-            tempfile.gettempdir(),
-            f"sn_piper_{uuid.uuid4().hex[:8]}.wav",
-        )
-        wav_file = None
+        temp_file = os.path.join(tempfile.gettempdir(), f"sn_piper_{uuid.uuid4().hex}.wav")
+        
+        try:
+            from piper.config import SynthesisConfig
+            syn_config = SynthesisConfig(length_scale=self._rate_scale)
+        except Exception:
+            syn_config = None
+
         try:
             import wave
+            wav_file = None
             with self._synth_lock:
-                wav_file = wave.open(tmp_path, "wb")
-                self._voice.synthesize(
-                    text,
-                    wav_file,
-                    length_scale=self._rate_scale,
-                )
-            self._state = EngineState.IDLE
-            return tmp_path
-        except Exception as e:
-            logger.error(f"Erro na síntese Piper: {e}")
-            self._state = EngineState.ERROR
-            if os.path.exists(tmp_path):
                 try:
-                    os.remove(tmp_path)
+                    for chunk in self._voice.synthesize(text, syn_config=syn_config):
+                        if wav_file is None:
+                            wav_file = wave.open(temp_file, "wb")
+                            wav_file.setnchannels(chunk.sample_channels)
+                            wav_file.setsampwidth(chunk.sample_width)
+                            wav_file.setframerate(chunk.sample_rate)
+                        wav_file.writeframes(chunk.audio_int16_bytes)
+                finally:
+                    if wav_file:
+                        wav_file.close()
+
+            if wav_file and os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+                self._state = EngineState.IDLE
+                return temp_file
+            else:
+                logger.warning("Nenhum chunk de áudio gerado pelo Piper.")
+                self._state = EngineState.IDLE
+                try:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
                 except OSError:
                     pass
-            return None
-        finally:
-            if wav_file is not None:
+                return None
+        except Exception as e:
+            logger.error(f"Erro ao sintetizar via Piper: {e}", exc_info=True)
+            if self.use_cuda and self._voice_id:
+                logger.info("Tentando fallback de síntese para CPU...")
                 try:
-                    wav_file.close()
-                except Exception:
-                    pass
+                    self._reload_voice_cpu_fallback()
+                    wav_file = None
+                    with self._synth_lock:
+                        try:
+                            for chunk in self._voice.synthesize(text, syn_config=syn_config):
+                                if wav_file is None:
+                                    wav_file = wave.open(temp_file, "wb")
+                                    wav_file.setnchannels(chunk.sample_channels)
+                                    wav_file.setsampwidth(chunk.sample_width)
+                                    wav_file.setframerate(chunk.sample_rate)
+                                wav_file.writeframes(chunk.audio_int16_bytes)
+                        finally:
+                            if wav_file:
+                                wav_file.close()
+                    if wav_file and os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+                        logger.info("Fallback para CPU bem-sucedido.")
+                        self._state = EngineState.IDLE
+                        return temp_file
+                except Exception as e2:
+                    logger.error(f"Fallback para CPU também falhou: {e2}", exc_info=True)
+            self._state = EngineState.ERROR
+            return None
+
+    def _reload_voice_cpu_fallback(self):
+        """Recarrega a voz atual em modo CPU como fallback."""
+        if not self._voice_id:
+            return
+        from piper.voice import PiperVoice
+        onnx_path = os.path.join(self.models_dir, f"{self._voice_id}.onnx")
+        config_path = os.path.join(self.models_dir, f"{self._voice_id}.onnx.json")
+        self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
+        logger.info(f"Voz recarregada em CPU (fallback): {self._voice_id}")
 
     def synthesize_stream(self, text: str):
         if not self._voice:
             if self._voice_id:
-                self._load_voice(self._voice_id)
+                self.set_voice(self._voice_id)
             if not self._voice:
                 logger.error("Nenhuma voz Piper carregada para streaming.")
                 return
