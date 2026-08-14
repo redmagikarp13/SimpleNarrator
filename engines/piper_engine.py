@@ -8,11 +8,32 @@ import uuid
 import tempfile
 import logging
 import threading
+"""
+Motor Piper TTS.
+Utiliza modelos ONNX para síntese de voz offline de alta qualidade.
+"""
+import os
+import sys
+import uuid
+import tempfile
+import logging
+import threading
 from typing import Optional, List
 
 from engines.base_engine import BaseEngine, EngineState, VoiceInfo
 
 logger = logging.getLogger(__name__)
+
+_REGISTERED_DLL_HANDLES = []
+
+
+def _get_local_cuda_dir() -> str:
+    """Retorna o caminho absoluto do diretório 'cuda' local."""
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, "cuda")
 
 
 def _register_nvidia_dll_paths():
@@ -20,14 +41,11 @@ def _register_nvidia_dll_paths():
     
     Funciona tanto em ambiente de desenvolvimento quanto no executável PyInstaller.
     """
+    global _REGISTERED_DLL_HANDLES
     dirs_to_add = []
     
     # Caso 0: Pasta 'cuda' local ao lado do executável ou raiz do projeto
-    if getattr(sys, "frozen", False):
-        base_dir = os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    local_cuda_dir = os.path.join(base_dir, "cuda")
+    local_cuda_dir = _get_local_cuda_dir()
     if os.path.isdir(local_cuda_dir) and local_cuda_dir not in dirs_to_add:
         dirs_to_add.append(local_cuda_dir)
 
@@ -37,7 +55,7 @@ def _register_nvidia_dll_paths():
         # Procurar DLLs NVIDIA na raiz do bundle e em subpastas
         for root, dirs, files in os.walk(meipass):
             for f in files:
-                if f.startswith(("cudnn", "cublas")) and f.endswith(".dll"):
+                if f.startswith(("cudnn", "cublas", "cudart", "nvrtc")) and f.endswith(".dll"):
                     if root not in dirs_to_add:
                         dirs_to_add.append(root)
                     break  # Só precisa encontrar um DLL por diretório
@@ -48,7 +66,7 @@ def _register_nvidia_dll_paths():
         nvidia_root = nvidia.__path__[0]
         for pkg_name in os.listdir(nvidia_root):
             bin_dir = os.path.join(nvidia_root, pkg_name, "bin")
-            if os.path.isdir(bin_dir):
+            if os.path.isdir(bin_dir) and bin_dir not in dirs_to_add:
                 dirs_to_add.append(bin_dir)
     except (ImportError, Exception):
         pass
@@ -72,17 +90,21 @@ def _register_nvidia_dll_paths():
             except Exception:
                 pass
 
-    # Registrar todos os diretórios encontrados
+    # Registrar todos os diretórios encontrados mantendo handles persistentes na memória
     for path in dirs_to_add:
-        try:
-            os.add_dll_directory(path)
-        except Exception:
-            pass
+        if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+            try:
+                handle = os.add_dll_directory(path)
+                _REGISTERED_DLL_HANDLES.append(handle)
+            except Exception:
+                pass
 
     # Também adicionar ao PATH para garantir que dependências cruzadas sejam encontradas
     if dirs_to_add:
         current_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = os.pathsep.join(dirs_to_add + [current_path])
+        new_dirs = [d for d in dirs_to_add if d not in current_path]
+        if new_dirs:
+            os.environ["PATH"] = os.pathsep.join(new_dirs + [current_path])
         logger.info(f"DLLs NVIDIA registrados no PATH ({len(dirs_to_add)} diretórios)")
     else:
         logger.debug("Nenhuma DLL NVIDIA encontrada.")
@@ -271,12 +293,23 @@ class PiperEngine(BaseEngine):
         """Verifica se o suporte GPU (CUDA) está disponível e funcional."""
         try:
             _register_nvidia_dll_paths()
+
+            # 1. Verificar se as DLLs estão presentes na pasta 'cuda' local
+            cuda_dir = _get_local_cuda_dir()
+            if os.path.isdir(cuda_dir):
+                files = [f.lower() for f in os.listdir(cuda_dir)]
+                has_cublas = any("cublas64" in f for f in files)
+                has_cudnn = any("cudnn" in f for f in files)
+                if has_cublas and has_cudnn:
+                    return True
+
+            # 2. Verificar se o ONNX Runtime já detecta CUDA nativamente
             import onnxruntime
             providers = onnxruntime.get_available_providers()
-            if "CUDAExecutionProvider" not in providers:
-                return False
+            if "CUDAExecutionProvider" in providers:
+                return True
 
-            # No Windows, validar se as DLLs essenciais da NVIDIA podem ser carregadas
+            # 3. No Windows, testar se as DLLs do CUDA Toolkit do sistema estão acessíveis
             if sys.platform == "win32":
                 import ctypes
                 for dll in ("cublas64_12.dll", "cublas64_11.dll", "cublas64_10.dll"):
@@ -285,8 +318,8 @@ class PiperEngine(BaseEngine):
                         return True
                     except Exception:
                         continue
-                return False
-            return True
+
+            return False
         except Exception:
             return False
 
@@ -297,11 +330,7 @@ class PiperEngine(BaseEngine):
         import shutil
         import requests
 
-        if getattr(sys, "frozen", False):
-            base_dir = os.path.dirname(os.path.abspath(sys.executable))
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cuda_dir = os.path.join(base_dir, "cuda")
+        cuda_dir = _get_local_cuda_dir()
         os.makedirs(cuda_dir, exist_ok=True)
 
         packages = [
@@ -309,6 +338,8 @@ class PiperEngine(BaseEngine):
             ("nvidia-cuda-nvrtc-cu12", "Baixando NVRTC..."),
             ("nvidia-cublas-cu12", "Baixando cuBLAS..."),
             ("nvidia-cudnn-cu12", "Baixando cuDNN..."),
+            ("nvidia-cufft-cu12", "Baixando cuFFT..."),
+            ("nvidia-curand-cu12", "Baixando cuRAND..."),
         ]
 
         total_pkgs = len(packages)
@@ -375,11 +406,7 @@ class PiperEngine(BaseEngine):
     def uninstall_gpu_support(cls) -> bool:
         """Remove a pasta local 'cuda' com as DLLs NVIDIA."""
         import shutil
-        if getattr(sys, "frozen", False):
-            base_dir = os.path.dirname(os.path.abspath(sys.executable))
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cuda_dir = os.path.join(base_dir, "cuda")
+        cuda_dir = _get_local_cuda_dir()
         if os.path.exists(cuda_dir):
             try:
                 shutil.rmtree(cuda_dir)

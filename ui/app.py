@@ -625,12 +625,14 @@ class NarratorApp(ctk.CTk):
             def progress(pct, msg):
                 self.after(0, lambda: self._gpu_progress_lbl.configure(text=f"{msg} ({int(pct*100)}%)"))
             success = PiperEngine.install_gpu_support(progress_callback=progress)
-            self.after(0, lambda: self._check_gpu_availability())
             if success:
+                self.after(0, lambda: self._gpu_var.set(True))
+                self.after(0, lambda: self._on_gpu_toggle())
                 self.after(0, lambda: self._gpu_progress_lbl.configure(text="Suporte GPU ativado com sucesso!", text_color="#4CAF50"))
             else:
                 self.after(0, lambda: self._gpu_progress_lbl.configure(text="Falha no download das DLLs.", text_color="red"))
                 self.after(0, lambda: self._btn_install_gpu.configure(state="normal"))
+            self.after(50, lambda: self._check_gpu_availability())
         threading.Thread(target=task, daemon=True).start()
 
     def _on_uninstall_gpu(self):
@@ -640,12 +642,14 @@ class NarratorApp(ctk.CTk):
         self._gpu_progress_lbl.configure(text="Removendo...", text_color="orange")
         def task():
             success = PiperEngine.uninstall_gpu_support()
-            self.after(0, lambda: self._check_gpu_availability())
             if success:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Suporte GPU removido! Reinicie o app.", text_color="#4CAF50"))
+                self.after(0, lambda: self._gpu_var.set(False))
+                self.after(0, lambda: self._on_gpu_toggle())
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="DLLs removidas! Usando modo CPU.", text_color="#4CAF50"))
             else:
                 self.after(0, lambda: self._gpu_progress_lbl.configure(text="Erro ao remover.", text_color="red"))
                 self.after(0, lambda: self._btn_uninstall_gpu.configure(state="normal"))
+            self.after(50, lambda: self._check_gpu_availability())
         threading.Thread(target=task, daemon=True).start()
 
     def _on_close(self):
