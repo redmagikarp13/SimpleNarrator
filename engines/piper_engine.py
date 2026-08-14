@@ -22,6 +22,15 @@ def _register_nvidia_dll_paths():
     """
     dirs_to_add = []
     
+    # Caso 0: Pasta 'cuda' local ao lado do executável ou raiz do projeto
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_cuda_dir = os.path.join(base_dir, "cuda")
+    if os.path.isdir(local_cuda_dir) and local_cuda_dir not in dirs_to_add:
+        dirs_to_add.append(local_cuda_dir)
+
     # Caso 1: PyInstaller bundle — DLLs estão em sys._MEIPASS
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
@@ -98,170 +107,138 @@ class PiperEngine(BaseEngine):
             if self._voice_id:
                 curr_voice = self._voice_id
                 self._voice = None
-                self._voice_id = None
-                self.set_voice(curr_voice)
+                self._load_voice(curr_voice)
 
     def initialize(self) -> None:
-        """Piper não precisa de inicialização global, apenas carregar o modelo."""
-        try:
-            logging.getLogger("piper").setLevel(logging.WARNING)
-            logging.getLogger("piper.voice").setLevel(logging.WARNING)
-            from piper.voice import PiperVoice
-            self._state = EngineState.IDLE
-        except ImportError:
-            logger.error("piper-tts não instalado. Execute: pip install piper-tts")
-            self._state = EngineState.ERROR
+        pass
 
-    def get_available_voices(self) -> List[VoiceInfo]:
-        """Lista as vozes .onnx disponíveis na pasta models."""
-        if not os.path.exists(self.models_dir):
-            return []
+    def get_available_voices(self) -> list[VoiceInfo]:
+        from piper.download import get_voices
+        result = []
+        voices_data = self._get_local_voices_data()
+        for voice_key, voice_meta in voices_data.items():
+            lang = voice_meta.get("language", {}).get("code", "unknown")
+            quality = voice_meta.get("quality", "unknown")
+            name = f"{voice_key} ({quality})"
+            result.append(
+                VoiceInfo(
+                    id=voice_key,
+                    name=name,
+                    language=lang,
+                    gender=None,
+                    engine_type="piper",
+                )
+            )
+        return result
 
-        voices = []
-        for file in os.listdir(self.models_dir):
-            if file.endswith(".onnx"):
-                voice_id = file.replace(".onnx", "")
-                json_path = os.path.join(self.models_dir, f"{voice_id}.onnx.json")
-                if os.path.exists(json_path):
-                    voices.append(VoiceInfo(id=voice_id, name=f"Piper: {voice_id}", language="IA"))
-        return voices
+    def _get_local_voices_data(self) -> dict:
+        import json
+        json_path = os.path.join(self.models_dir, "voices.json")
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Erro ao ler voices.json local: {e}")
+        return {}
 
     def set_voice(self, voice_id: str) -> None:
-        """Carrega o modelo ONNX em memória (CPU ou GPU)."""
-        if self._voice_id == voice_id and self._voice is not None:
+        self._voice_id = voice_id
+        self._load_voice(voice_id)
+
+    def _load_voice(self, voice_id: str) -> None:
+        from piper import PiperVoice
+        onnx_file = os.path.join(self.models_dir, f"{voice_id}.onnx")
+        config_file = os.path.join(self.models_dir, f"{voice_id}.onnx.json")
+
+        if not os.path.exists(onnx_file):
+            self._voice = None
             return
 
-        onnx_path = os.path.join(self.models_dir, f"{voice_id}.onnx")
-        config_path = os.path.join(self.models_dir, f"{voice_id}.onnx.json")
-
-        if not os.path.exists(onnx_path) or not os.path.exists(config_path):
-            logger.error(f"Arquivos da voz {voice_id} não encontrados.")
-            return
+        _register_nvidia_dll_paths()
 
         try:
-            from piper.voice import PiperVoice
-            if self.use_cuda:
-                _register_nvidia_dll_paths()
-            self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=self.use_cuda)
-            self._voice_id = voice_id
-            logger.info(f"Voz Piper carregada (use_cuda={self.use_cuda}): {voice_id}")
+            cfg = config_file if os.path.exists(config_file) else None
+            self._voice = PiperVoice.load(
+                onnx_file,
+                config_path=cfg,
+                use_cuda=self.use_cuda,
+            )
+            logger.info(f"Voz Piper '{voice_id}' carregada (CUDA: {self.use_cuda}).")
         except Exception as e:
-            logger.error(f"Erro ao carregar voz {voice_id} (use_cuda={self.use_cuda}): {e}")
             if self.use_cuda:
-                logger.info("Tentando fallback para CPU...")
+                logger.warning(f"Falha ao carregar modelo com CUDA ({e}). Tentando CPU...")
                 try:
-                    self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
-                    self._voice_id = voice_id
-                    logger.info(f"Voz Piper carregada em fallback CPU: {voice_id}")
-                except Exception as e2:
-                    logger.error(f"Erro no fallback CPU: {e2}")
-                    self._voice = None
-            else:
-                self._voice = None
+                    cfg = config_file if os.path.exists(config_file) else None
+                    self._voice = PiperVoice.load(
+                        onnx_file,
+                        config_path=cfg,
+                        use_cuda=False,
+                    )
+                    self.use_cuda = False
+                    logger.info(f"Voz Piper '{voice_id}' carregada em modo CPU após fallback.")
+                    return
+                except Exception as fallback_err:
+                    logger.error(f"Fallback para CPU também falhou: {fallback_err}")
+            logger.error(f"Erro ao carregar modelo Piper: {e}")
+            self._voice = None
 
     def set_rate(self, rate: float) -> None:
-        """
-        No Piper, a velocidade é controlada pelo 'length_scale'.
-        1.0 é o padrão. Valores < 1.0 são mais rápidos, > 1.0 são mais lentos.
-        O rate do UI vai de 0.5 a 2.0 (onde 2.0 = 2x mais rápido).
-        Então length_scale = 1.0 / rate
-        """
         if rate <= 0:
             rate = 1.0
         self._rate_scale = 1.0 / rate
 
     def set_pitch(self, pitch: float) -> None:
-        """Piper TTS (ONNX) não suporta controle de pitch nativamente de forma simples."""
         pass
 
     def synthesize(self, text: str) -> Optional[str]:
-        """Sintetiza texto e retorna o caminho do arquivo WAV."""
-        if self._voice is None:
-            logger.error("Nenhuma voz Piper carregada.")
-            return None
+        if not self._voice:
+            if self._voice_id:
+                self._load_voice(self._voice_id)
+            if not self._voice:
+                logger.error("Nenhuma voz Piper carregada.")
+                return None
 
         self._state = EngineState.SPEAKING
-        temp_file = os.path.join(tempfile.gettempdir(), f"sn_piper_{uuid.uuid4().hex}.wav")
-        
-        try:
-            from piper.config import SynthesisConfig
-            syn_config = SynthesisConfig(length_scale=self._rate_scale)
-        except Exception:
-            syn_config = None
-
+        tmp_path = os.path.join(
+            tempfile.gettempdir(),
+            f"sn_piper_{uuid.uuid4().hex[:8]}.wav",
+        )
+        wav_file = None
         try:
             import wave
-            wav_file = None
             with self._synth_lock:
+                wav_file = wave.open(tmp_path, "wb")
+                self._voice.synthesize(
+                    text,
+                    wav_file,
+                    length_scale=self._rate_scale,
+                )
+            self._state = EngineState.IDLE
+            return tmp_path
+        except Exception as e:
+            logger.error(f"Erro na síntese Piper: {e}")
+            self._state = EngineState.ERROR
+            if os.path.exists(tmp_path):
                 try:
-                    for chunk in self._voice.synthesize(text, syn_config=syn_config):
-                        if wav_file is None:
-                            wav_file = wave.open(temp_file, "wb")
-                            wav_file.setnchannels(chunk.sample_channels)
-                            wav_file.setsampwidth(chunk.sample_width)
-                            wav_file.setframerate(chunk.sample_rate)
-                        wav_file.writeframes(chunk.audio_int16_bytes)
-                finally:
-                    if wav_file:
-                        wav_file.close()
-
-            if wav_file and os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-                self._state = EngineState.IDLE
-                return temp_file
-            else:
-                logger.warning("Nenhum chunk de áudio gerado pelo Piper.")
-                self._state = EngineState.IDLE
-                # Limpar arquivo vazio se existir
-                try:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
+                    os.remove(tmp_path)
                 except OSError:
                     pass
-                return None
-        except Exception as e:
-            logger.error(f"Erro ao sintetizar via Piper: {e}", exc_info=True)
-            # Se estava usando CUDA e falhou, tentar fallback para CPU
-            if self.use_cuda and self._voice_id:
-                logger.info("Tentando fallback de síntese para CPU...")
-                try:
-                    self._reload_voice_cpu_fallback()
-                    # Tentar síntese novamente em CPU
-                    wav_file = None
-                    with self._synth_lock:
-                        try:
-                            for chunk in self._voice.synthesize(text, syn_config=syn_config):
-                                if wav_file is None:
-                                    wav_file = wave.open(temp_file, "wb")
-                                    wav_file.setnchannels(chunk.sample_channels)
-                                    wav_file.setsampwidth(chunk.sample_width)
-                                    wav_file.setframerate(chunk.sample_rate)
-                                wav_file.writeframes(chunk.audio_int16_bytes)
-                        finally:
-                            if wav_file:
-                                wav_file.close()
-                    if wav_file and os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-                        logger.info("Fallback para CPU bem-sucedido.")
-                        self._state = EngineState.IDLE
-                        return temp_file
-                except Exception as e2:
-                    logger.error(f"Fallback para CPU também falhou: {e2}", exc_info=True)
-            self._state = EngineState.ERROR
             return None
-
-    def _reload_voice_cpu_fallback(self):
-        """Recarrega a voz atual em modo CPU como fallback."""
-        if not self._voice_id:
-            return
-        from piper.voice import PiperVoice
-        onnx_path = os.path.join(self.models_dir, f"{self._voice_id}.onnx")
-        config_path = os.path.join(self.models_dir, f"{self._voice_id}.onnx.json")
-        self._voice = PiperVoice.load(onnx_path, config_path, use_cuda=False)
-        logger.info(f"Voz recarregada em CPU (fallback): {self._voice_id}")
+        finally:
+            if wav_file is not None:
+                try:
+                    wav_file.close()
+                except Exception:
+                    pass
 
     def synthesize_stream(self, text: str):
-        """Streaming de áudio - retorna iterator de bytes raw PCM."""
-        if self._voice is None:
-            return iter([])
+        if not self._voice:
+            if self._voice_id:
+                self._load_voice(self._voice_id)
+            if not self._voice:
+                logger.error("Nenhuma voz Piper carregada para streaming.")
+                return
 
         self._state = EngineState.SPEAKING
         try:
@@ -286,130 +263,129 @@ class PiperEngine(BaseEngine):
         return "IA (Piper TTS)"
 
     # ─────────────────────────────────────────────
-    #  GERENCIAMENTO DE GPU (Instalacao sob demanda)
+    #  GERENCIAMENTO DE GPU (Instalação sob demanda)
     # ─────────────────────────────────────────────
 
     @staticmethod
     def is_gpu_available() -> bool:
-        """Verifica se as bibliotecas GPU estao instaladas."""
+        """Verifica se o suporte GPU (CUDA) está disponível e funcional."""
         try:
+            _register_nvidia_dll_paths()
             import onnxruntime
             providers = onnxruntime.get_available_providers()
-            return "CUDAExecutionProvider" in providers
+            if "CUDAExecutionProvider" not in providers:
+                return False
+
+            # No Windows, validar se as DLLs essenciais da NVIDIA podem ser carregadas
+            if sys.platform == "win32":
+                import ctypes
+                for dll in ("cublas64_12.dll", "cublas64_11.dll", "cublas64_10.dll"):
+                    try:
+                        ctypes.WinDLL(dll)
+                        return True
+                    except Exception:
+                        continue
+                return False
+            return True
         except Exception:
             return False
 
-    @staticmethod
-    def _get_python_executable() -> Optional[str]:
-        """Retorna o interpretador Python apropriado para pip (apenas em desenvolvimento)."""
-        if getattr(sys, "frozen", False):
-            return None
-        exe = sys.executable
-        if exe and os.path.isfile(exe):
-            base = os.path.basename(exe).lower()
-            if "python" in base:
-                if "pythonw" in base:
-                    candidate = exe.lower().replace("pythonw.exe", "python.exe").replace("pythonw", "python")
-                    if os.path.isfile(candidate):
-                        return candidate
-                return exe
-        import shutil
-        return shutil.which("python") or shutil.which("python3") or shutil.which("py")
-
     @classmethod
     def install_gpu_support(cls, progress_callback=None) -> bool:
-        """Instala onnxruntime-gpu e nvidia-cudnn-cu12 via pip (modo desenvolvimento)."""
+        """Baixa e extrai as DLLs NVIDIA CUDA/cuDNN diretamente para a pasta 'cuda' local."""
+        import zipfile
+        import shutil
+        import requests
+
         if getattr(sys, "frozen", False):
-            logger.warning("Instalação via pip não é suportada no executável empacotado.")
-            if progress_callback:
-                progress_callback(1.0, "Modo executável: use a versão CPU ou instale o CUDA Toolkit no sistema.")
-            return False
-
-        python_bin = cls._get_python_executable()
-        if not python_bin:
-            logger.error("Interpretador Python não encontrado para instalação de pacotes.")
-            return False
-
-        import subprocess
-        creationflags = 0
-        startupinfo = None
-        if sys.platform == "win32":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
+            base_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cuda_dir = os.path.join(base_dir, "cuda")
+        os.makedirs(cuda_dir, exist_ok=True)
 
         packages = [
-            ("onnxruntime-gpu>=1.28.0", "Instalando ONNX Runtime GPU..."),
-            ("nvidia-cudnn-cu12>=9.0.0", "Instalando cuDNN (pode demorar)..."),
+            ("nvidia-cuda-runtime-cu12", "Baixando CUDA Runtime..."),
+            ("nvidia-cuda-nvrtc-cu12", "Baixando NVRTC..."),
+            ("nvidia-cublas-cu12", "Baixando cuBLAS..."),
+            ("nvidia-cudnn-cu12", "Baixando cuDNN..."),
         ]
-        for i, (pkg, msg) in enumerate(packages):
+
+        total_pkgs = len(packages)
+        for i, (pkg_name, label) in enumerate(packages):
             if progress_callback:
-                progress_callback(i / len(packages), msg)
+                progress_callback(i / total_pkgs, f"Buscando {pkg_name}...")
             try:
-                result = subprocess.run(
-                    [python_bin, "-m", "pip", "install", pkg, "--quiet"],
-                    capture_output=True, text=True, timeout=600,
-                    creationflags=creationflags,
-                    startupinfo=startupinfo,
-                    stdin=subprocess.DEVNULL,
-                )
-                if result.returncode != 0:
-                    logger.error(f"Erro ao instalar {pkg}: {result.stderr}")
+                pypi_resp = requests.get(f"https://pypi.org/pypi/{pkg_name}/json", timeout=15)
+                pypi_resp.raise_for_status()
+                data = pypi_resp.json()
+                win_urls = [u for u in data.get("urls", []) if "win_amd64.whl" in u.get("filename", "")]
+                if not win_urls:
+                    logger.error(f"Nenhum wheel Windows encontrado para {pkg_name}")
                     return False
+
+                wheel_info = win_urls[-1]
+                wheel_url = wheel_info["url"]
+                total_size = int(wheel_info.get("size", 0))
+
+                tmp_wheel = os.path.join(tempfile.gettempdir(), f"{pkg_name}.whl")
+                downloaded = 0
+                with requests.get(wheel_url, stream=True, timeout=(15, 60)) as resp:
+                    resp.raise_for_status()
+                    with open(tmp_wheel, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=1024 * 128):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if progress_callback and total_size > 0:
+                                    file_pct = downloaded / total_size
+                                    overall = (i + file_pct) / total_pkgs
+                                    mb_done = downloaded / (1024 * 1024)
+                                    mb_total = total_size / (1024 * 1024)
+                                    progress_callback(overall, f"{label} ({mb_done:.0f}/{mb_total:.0f} MB)")
+
+                if progress_callback:
+                    progress_callback((i + 0.95) / total_pkgs, f"Extraindo DLLs de {pkg_name}...")
+
+                with zipfile.ZipFile(tmp_wheel, "r") as zf:
+                    for member in zf.namelist():
+                        if member.lower().endswith(".dll"):
+                            filename = os.path.basename(member)
+                            if filename:
+                                target_path = os.path.join(cuda_dir, filename)
+                                with zf.open(member) as src, open(target_path, "wb") as dst:
+                                    shutil.copyfileobj(src, dst)
+
+                try:
+                    os.remove(tmp_wheel)
+                except OSError:
+                    pass
+
             except Exception as e:
-                logger.error(f"Exceção ao instalar {pkg}: {e}")
+                logger.error(f"Erro ao baixar/extrair {pkg_name}: {e}", exc_info=True)
                 return False
+
+        _register_nvidia_dll_paths()
         if progress_callback:
-            progress_callback(1.0, "Instalação concluída!")
-        logger.info("Suporte GPU instalado com sucesso.")
+            progress_callback(1.0, "DLLs instaladas com sucesso!")
+        logger.info("Suporte GPU instalado com sucesso na pasta cuda/.")
         return True
 
     @classmethod
     def uninstall_gpu_support(cls) -> bool:
-        """Remove bibliotecas GPU e reverte para onnxruntime (CPU) (modo desenvolvimento)."""
+        """Remove a pasta local 'cuda' com as DLLs NVIDIA."""
+        import shutil
         if getattr(sys, "frozen", False):
-            logger.warning("Desinstalação via pip não é suportada no executável empacotado.")
-            return False
-
-        python_bin = cls._get_python_executable()
-        if not python_bin:
-            return False
-
-        import subprocess
-        creationflags = 0
-        startupinfo = None
-        if sys.platform == "win32":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-
-        packages_to_remove = ["onnxruntime-gpu", "nvidia-cudnn-cu12", "nvidia-cublas-cu12", "nvidia-cuda-nvrtc-cu12"]
-        for pkg in packages_to_remove:
+            base_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cuda_dir = os.path.join(base_dir, "cuda")
+        if os.path.exists(cuda_dir):
             try:
-                subprocess.run(
-                    [python_bin, "-m", "pip", "uninstall", "-y", pkg],
-                    capture_output=True, timeout=120,
-                    creationflags=creationflags,
-                    startupinfo=startupinfo,
-                    stdin=subprocess.DEVNULL,
-                )
+                shutil.rmtree(cuda_dir)
+                logger.info("Pasta cuda/ removida com sucesso.")
+                return True
             except Exception as e:
-                logger.debug(f"Erro ao desinstalar {pkg}: {e}")
-        try:
-            result = subprocess.run(
-                [python_bin, "-m", "pip", "install", "onnxruntime>=1.28.0", "--quiet"],
-                capture_output=True, text=True, timeout=300,
-                creationflags=creationflags,
-                startupinfo=startupinfo,
-                stdin=subprocess.DEVNULL,
-            )
-            if result.returncode != 0:
-                logger.error(f"Erro ao reinstalar onnxruntime CPU: {result.stderr}")
+                logger.error(f"Erro ao remover pasta cuda/: {e}")
                 return False
-        except Exception as e:
-            logger.error(f"Exceção ao reinstalar onnxruntime CPU: {e}")
-            return False
-        logger.info("Suporte GPU removido. Usando CPU agora.")
         return True

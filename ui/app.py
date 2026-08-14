@@ -273,8 +273,8 @@ class NarratorApp(ctk.CTk):
 
         gpu_btn_frame = ctk.CTkFrame(self.tab_modelos, fg_color="transparent")
         gpu_btn_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
-        self._btn_install_gpu = ctk.CTkButton(gpu_btn_frame, text="Instalar Suporte GPU", command=self._on_install_gpu, fg_color="#4CAF50", hover_color="#388E3C")
-        self._btn_uninstall_gpu = ctk.CTkButton(gpu_btn_frame, text="Remover Suporte GPU", command=self._on_uninstall_gpu, fg_color="#D32F2F", hover_color="#B71C1C", state="disabled")
+        self._btn_install_gpu = ctk.CTkButton(gpu_btn_frame, text="Baixar DLLs da GPU (CUDA)", command=self._on_install_gpu, fg_color="#4CAF50", hover_color="#388E3C")
+        self._btn_uninstall_gpu = ctk.CTkButton(gpu_btn_frame, text="Remover DLLs da GPU", command=self._on_uninstall_gpu, fg_color="#D32F2F", hover_color="#B71C1C", state="disabled")
         self._gpu_progress_lbl = ctk.CTkLabel(gpu_btn_frame, text="", text_color="gray", font=ctk.CTkFont(size=10))
         self._gpu_progress_lbl.pack(side="left", padx=10)
 
@@ -318,28 +318,32 @@ class NarratorApp(ctk.CTk):
             ctk.CTkLabel(frame, text=f"{key} ({lang} - {quality})").pack(side="left", padx=10, pady=5)
             
             if is_downloaded:
-                btn_del = ctk.CTkButton(frame, text="Excluir", fg_color="#D32F2F", hover_color="#B71C1C", width=80)
-                btn_del.configure(command=lambda k=key, f=frame: self._on_delete_model(k, f))
-                btn_del.pack(side="right", padx=10, pady=5)
-                
-                lbl_status = ctk.CTkLabel(frame, text="Instalado", text_color="#4CAF50", font=ctk.CTkFont(weight="bold"))
-                lbl_status.pack(side="right", padx=5, pady=5)
+                # Botão Excluir
+                ctk.CTkButton(
+                    frame, 
+                    text="Excluir", 
+                    width=70, 
+                    fg_color="#D32F2F", 
+                    hover_color="#B71C1C",
+                    command=lambda k=key, f=frame: self._on_delete_model(k, f)
+                ).pack(side="right", padx=10, pady=5)
+                ctk.CTkLabel(frame, text="Instalado", text_color="green").pack(side="right", padx=10)
             else:
-                btn = ctk.CTkButton(frame, text="Baixar", fg_color=["#3B8ED0", "#1F6AA5"])
-                btn.configure(command=lambda k=key, b=btn, f=frame: self._on_download_model(k, b, f))
-                btn.pack(side="right", padx=10, pady=5)
+                # Botão Baixar
+                btn_download = ctk.CTkButton(frame, text="Baixar", width=70)
+                btn_download.configure(command=lambda k=key, b=btn_download, f=frame: self._on_download_model(k, b, f))
+                btn_download.pack(side="right", padx=10, pady=5)
 
     def _on_download_model(self, key: str, btn: ctk.CTkButton, frame: ctk.CTkFrame):
         btn.configure(state="disabled", text="0%")
         
-        def progress(perc, msg):
-            self.after(0, lambda: btn.configure(text=f"{int(perc * 100)}%"))
-            self.after(0, lambda: self._models_status_lbl.configure(text=msg))
+        def progress(pct, text):
+            self.after(0, lambda: btn.configure(text=f"{int(pct*100)}%"))
 
         def task():
             success = self.downloader.download_voice(key, progress_callback=progress)
             if success:
-                self.after(0, lambda: self._engines["piper"].initialize())
+                self._engines["piper"].initialize()
                 if self._engine_var.get() == "piper":
                     self.after(0, lambda: self._on_engine_change("piper"))
                 if self.downloader.voices_data:
@@ -362,66 +366,79 @@ class NarratorApp(ctk.CTk):
     #  LÓGICA GERAL (Inicialização e UI)
     # ─────────────────────────────────────────────
     def _init_engines(self):
-        def _init():
-            for name, engine in self._engines.items():
-                try:
-                    engine.initialize()
-                except Exception as e:
-                    logger.error(f"Falha ao inicializar '{name}': {e}")
-            self.after(0, lambda: self._on_engine_change(self._engine_var.get()))
-        threading.Thread(target=_init, daemon=True).start()
+        try:
+            self._engines["native"].initialize()
+        except Exception as e:
+            logger.error(f"Erro ao inicializar motor nativo: {e}")
 
-    def _on_engine_display_change(self, display_name: str):
-        if "Piper" in display_name:
-            self._engine_var.set("piper")
+        try:
+            self._engines["piper"].initialize()
+        except Exception as e:
+            logger.error(f"Erro ao inicializar motor Piper: {e}")
+
+        self._active_engine = self._engines["native"]
+        self._refresh_voices()
+
+    def _refresh_voices(self):
+        if not self._active_engine: return
+        try:
+            self._voices = self._active_engine.get_available_voices()
+            names = [v.name for v in self._voices] if self._voices else ["Nenhuma voz"]
+            self._voice_menu.configure(values=names)
+            if names and names[0] != "Nenhuma voz":
+                self._voice_var.set(names[0])
+                self._active_engine.set_voice(self._voices[0].id)
+            else:
+                self._voice_var.set("—")
+        except Exception as e:
+            logger.error(f"Erro ao carregar vozes: {e}")
+            self._voices = []
+            self._voice_menu.configure(values=["Erro ao carregar"])
+            self._voice_var.set("—")
+
+    def _on_engine_display_change(self, choice: str):
+        engine_key = "native" if "Nativo" in choice else "piper"
+        self._on_engine_change(engine_key)
+
+    def _on_engine_change(self, engine_key: str):
+        self._engine_var.set(engine_key)
+        self._active_engine = self._engines[engine_key]
+        
+        # Ajustar visibilidade do checkbox de GPU
+        if engine_key == "piper" and PiperEngine.is_gpu_available():
+            self._gpu_checkbox.grid()
             self._gpu_checkbox.configure(state="normal")
         else:
-            self._engine_var.set("native")
+            self._gpu_checkbox.grid_remove()
             self._gpu_checkbox.configure(state="disabled")
-        self._on_engine_change(self._engine_var.get())
+
+        self._refresh_voices()
 
     def _on_gpu_toggle(self):
         use_cuda = self._gpu_var.get()
-        piper_engine = self._engines.get("piper")
-        if isinstance(piper_engine, PiperEngine):
-            piper_engine.set_use_cuda(use_cuda)
-            if self._engine_var.get() == "piper":
-                self._on_engine_change("piper")
+        piper: PiperEngine = self._engines["piper"]
+        piper.set_use_cuda(use_cuda)
+        logger.info(f"Aceleração GPU alterada para: {use_cuda}")
 
-    def _on_engine_change(self, engine_key: str):
-        self._active_engine = self._engines.get(engine_key)
-        if self._active_engine:
-            self._voices = self._active_engine.get_available_voices()
-            voice_names = [v.name for v in self._voices]
-
-            if voice_names:
-                self._voice_menu.configure(values=voice_names)
-                self._voice_var.set(voice_names[0])
-                self._active_engine.set_voice(self._voices[0].id)
-                self._progress_label.configure(text=f"Motor: {self._active_engine.engine_name} — {len(self._voices)} voz(es)")
-            else:
-                self._voice_menu.configure(values=["— Sem vozes —"])
-                self._voice_var.set("— Sem vozes —")
-                self._progress_label.configure(text=f"Sem vozes para '{self._active_engine.engine_name}'. Vá na aba Modelos.", text_color="orange")
-
-    def _on_voice_change(self, voice_name: str):
-        if not self._active_engine: return
+    def _on_voice_change(self, choice: str):
         for v in self._voices:
-            if v.name == voice_name:
+            if v.name == choice:
                 self._active_engine.set_voice(v.id)
                 break
 
     def _on_rate_change(self, value: float):
-        if self._active_engine: self._active_engine.set_rate(value)
+        if self._active_engine:
+            self._active_engine.set_rate(value)
 
     def _on_pitch_change(self, value: float):
-        if self._active_engine: self._active_engine.set_pitch(value)
+        if self._active_engine:
+            self._active_engine.set_pitch(value)
 
     def _on_import_file(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Text/PDF", "*.txt *.pdf")])
+        file_path = filedialog.askopenfilename(filetypes=[("Documentos de Texto", "*.txt *.pdf")])
         if file_path:
+            from file_io.reader import read_file
             try:
-                from file_io.reader import read_file
                 text = read_file(file_path)
                 self._text_box.delete("1.0", "end")
                 self._text_box.insert("1.0", text)
@@ -503,93 +520,75 @@ class NarratorApp(ctk.CTk):
         for i, file_path in enumerate(self._batch_files):
             if not self._is_processing: break
             
-            p = Path(file_path)
-            output_name = p.stem + ".mp3"
-            output_path = os.path.join(self._batch_output_dir, output_name)
-            
-            self.after(0, lambda i=i, name=p.name: self._batch_progress_lbl.configure(text=f"Processando {i+1}/{total}: {name}"))
+            p_file = Path(file_path)
+            self._batch_progress_lbl.configure(text=f"Processando ({i+1}/{total}): {p_file.name}")
             
             try:
                 text = read_file(file_path)
                 chunks = chunk_text(text)
+                out_name = f"{p_file.stem}.mp3"
+                out_path = os.path.join(self._batch_output_dir, out_name)
                 
-                # Aproveitamos o _synthesize_and_export que já faz o merge
-                # Precisamos passar callbacks falsos de progress bar se não quisermos atualizar a barra de cada bloco
-                self._synthesize_and_export(chunks, output_path, "mp3", self._batch_progress_bar, None, None)
-                
+                # Executa sincronamente nesta thread worker
+                self._synthesize_and_export(chunks, out_path, "mp3", self._batch_progress_bar, self._batch_progress_lbl)
             except Exception as e:
-                logger.error(f"Erro no arquivo {file_path}: {e}")
-                
-            self.after(0, lambda progress=(i+1)/total: self._batch_progress_bar.set(progress))
+                logger.error(f"Erro ao processar {file_path}: {e}")
 
-        self._is_processing = False
-        self.after(0, lambda: self._batch_progress_lbl.configure(text="Lote finalizado com sucesso!", text_color="green"))
+        self.after(0, lambda: self._batch_progress_lbl.configure(text="Lote concluído!"))
         self.after(0, lambda: self._btn_process_batch.configure(state="normal"))
+        self._is_processing = False
 
     # ─────────────────────────────────────────────
     #  WORKER: SINTETIZAÇÃO
     # ─────────────────────────────────────────────
-    def _synthesize_and_export(self, chunks, output_path: str, fmt: str, pbar, plabel, on_finish):
-        if not self._active_engine: return
+    def _synthesize_and_export(self, chunks, output_path: str, fmt: str, pbar=None, plabel=None, on_finish=None):
+        import shutil
+        import uuid
         audio_files = []
         total = len(chunks)
-
+        
         try:
             for chunk in chunks:
                 if not self._is_processing:
-                    if on_finish: self.after(0, on_finish)
-                    return
+                    break
+                if plabel: 
+                    self.after(0, lambda idx=chunk.index+1: plabel.configure(text=f"Sintetizando {idx}/{total}...", text_color="gray"))
 
-                if plabel:
-                    self.after(0, lambda c=chunk: plabel.configure(text=f"Sintetizando bloco {c.index + 1} de {total}..."))
-                
-                tmp_wav = os.path.join(tempfile.gettempdir(), f"sn_chunk_{chunk.index:04d}.wav")
-
-                try:
-                    audio_path = self._active_engine.synthesize(chunk.text)
-                except Exception as e:
-                    logger.error(f"Erro na síntese do bloco {chunk.index + 1}: {e}", exc_info=True)
-                    if plabel:
-                        self.after(0, lambda t=chunk.text[:40]: plabel.configure(text=f"Erro no bloco: '{t}...'", text_color="red"))
-                    continue
-                
+                audio_path = self._active_engine.synthesize(chunk.text)
                 if audio_path and os.path.exists(audio_path):
-                    import shutil
+                    # Copiar para arquivo temporário persistente para o exporter
+                    tmp_wav = os.path.join(tempfile.gettempdir(), f"chunk_{uuid.uuid4().hex[:8]}.wav")
                     shutil.copy2(audio_path, tmp_wav)
                     audio_files.append(tmp_wav)
                 else:
                     logger.warning(f"Síntese retornou vazio para o bloco {chunk.index + 1}.")
-
-                if pbar: self.after(0, lambda p=(chunk.index + 1)/total: pbar.set(p))
+                
+                if pbar:
+                    self.after(0, lambda val=(chunk.index + 1) / total: pbar.set(val))
 
             if not self._is_processing or not audio_files:
                 if plabel:
-                    self.after(0, lambda: plabel.configure(text="Falha na síntese. Instale o modelo na aba Modelos.", text_color="red"))
-                self.after(0, lambda: messagebox.showerror("Erro de Síntese", "Nenhum áudio foi gerado.\n\nVerifique se o modelo de voz do Piper está baixado na aba 'Modelos Piper' ou se os drivers CUDA estão configurados corretamente.", parent=self))
+                    self.after(0, lambda: plabel.configure(text="Falha na síntese.", text_color="red"))
                 if on_finish: self.after(0, on_finish)
                 return
 
             if plabel: self.after(0, lambda: plabel.configure(text="Mesclando MP3...", text_color="gray"))
+            merge_and_export(audio_files, output_path, format=fmt)
+            if plabel: self.after(0, lambda: plabel.configure(text=f"Salvo: {Path(output_path).name}", text_color="#4CAF50"))
 
-            try:
-                merge_and_export(audio_files, output_path, format=fmt)
-                if plabel: self.after(0, lambda: plabel.configure(text=f"Salvo: {Path(output_path).name}", text_color="#4CAF50"))
-            except Exception as e:
-                logger.error(f"Erro ao exportar: {e}", exc_info=True)
-                if plabel: self.after(0, lambda: plabel.configure(text="Erro ao exportar.", text_color="red"))
         except Exception as e:
             logger.error(f"Erro inesperado no worker de síntese: {e}", exc_info=True)
             if plabel:
                 self.after(0, lambda: plabel.configure(text=f"Erro inesperado: {e}", text_color="red"))
         finally:
-            for f in audio_files:
-                try: os.remove(f)
+            # Limpeza dos WAVs temporários
+            for af in audio_files:
+                try:
+                    if os.path.exists(af): os.remove(af)
                 except: pass
             
-            # Se for uma chamada unitária, is_processing reseta. Se for do lote, o lote controla
-            if on_finish:
-                self._is_processing = False
-                self.after(0, on_finish)
+            self._is_processing = False
+            if on_finish: self.after(0, on_finish)
 
     def _on_cancel(self):
         self._is_processing = False
@@ -602,53 +601,40 @@ class NarratorApp(ctk.CTk):
 
     def _check_gpu_availability(self):
         gpu_ok = PiperEngine.is_gpu_available()
-        is_frozen = getattr(sys, "frozen", False)
         if gpu_ok:
             self._gpu_status_lbl.configure(text="GPU disponível (CUDA)!", text_color="#4CAF50")
             self._gpu_checkbox.grid()
             self._cuda_link_btn.grid()
-            if is_frozen:
-                self._btn_install_gpu.pack_forget()
-                self._btn_uninstall_gpu.pack_forget()
-            else:
-                self._btn_install_gpu.pack(side="left", padx=5)
-                self._btn_install_gpu.configure(state="disabled")
-                self._btn_uninstall_gpu.pack(side="left", padx=5)
-                self._btn_uninstall_gpu.configure(state="normal")
+            self._btn_install_gpu.pack(side="left", padx=5)
+            self._btn_install_gpu.configure(state="disabled", text="DLLs Instaladas ✓")
+            self._btn_uninstall_gpu.pack(side="left", padx=5)
+            self._btn_uninstall_gpu.configure(state="normal", text="Remover DLLs da GPU")
         else:
-            if is_frozen:
-                self._gpu_status_lbl.configure(text="Modo CPU (Otimizado)", text_color="gray")
-                self._gpu_checkbox.grid_remove()
-                self._cuda_link_btn.grid()
-                self._btn_install_gpu.pack_forget()
-                self._btn_uninstall_gpu.pack_forget()
-            else:
-                self._gpu_status_lbl.configure(text="Não instalado (CPU apenas)", text_color="orange")
-                self._gpu_checkbox.grid_remove()
-                self._cuda_link_btn.grid_remove()
-                self._btn_install_gpu.pack(side="left", padx=5)
-                self._btn_install_gpu.configure(state="normal")
-                self._btn_uninstall_gpu.pack(side="left", padx=5)
-                self._btn_uninstall_gpu.configure(state="disabled")
-
+            self._gpu_status_lbl.configure(text="Não instalado (CPU apenas)", text_color="orange")
+            self._gpu_checkbox.grid_remove()
+            self._cuda_link_btn.grid_remove()
+            self._btn_install_gpu.pack(side="left", padx=5)
+            self._btn_install_gpu.configure(state="normal", text="Baixar DLLs da GPU (CUDA)")
+            self._btn_uninstall_gpu.pack(side="left", padx=5)
+            self._btn_uninstall_gpu.configure(state="disabled", text="Remover DLLs da GPU")
 
     def _on_install_gpu(self):
         self._btn_install_gpu.configure(state="disabled")
-        self._gpu_progress_lbl.configure(text="Instalando... (pode demorar alguns minutos)", text_color="orange")
+        self._gpu_progress_lbl.configure(text="Conectando aos servidores...", text_color="orange")
         def task():
             def progress(pct, msg):
                 self.after(0, lambda: self._gpu_progress_lbl.configure(text=f"{msg} ({int(pct*100)}%)"))
             success = PiperEngine.install_gpu_support(progress_callback=progress)
             self.after(0, lambda: self._check_gpu_availability())
             if success:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Suporte GPU instalado com sucesso! Reinicie o app.", text_color="#4CAF50"))
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Suporte GPU ativado com sucesso!", text_color="#4CAF50"))
             else:
-                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Falha na instalação.", text_color="red"))
+                self.after(0, lambda: self._gpu_progress_lbl.configure(text="Falha no download das DLLs.", text_color="red"))
                 self.after(0, lambda: self._btn_install_gpu.configure(state="normal"))
         threading.Thread(target=task, daemon=True).start()
 
     def _on_uninstall_gpu(self):
-        if not messagebox.askyesno("Remover GPU", "Remover suporte GPU? O app voltará a usar CPU.", parent=self):
+        if not messagebox.askyesno("Remover GPU", "Remover as DLLs da GPU? O app voltará a usar CPU.", parent=self):
             return
         self._btn_uninstall_gpu.configure(state="disabled")
         self._gpu_progress_lbl.configure(text="Removendo...", text_color="orange")
